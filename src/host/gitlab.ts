@@ -1,5 +1,12 @@
 import type { Runner } from "../util/exec.js";
-import type { FetchResult, Host, PullMeta, ReviewComment } from "./types.js";
+import type {
+  ExistingComment,
+  FetchResult,
+  Host,
+  PullMeta,
+  ReviewAction,
+  ReviewComment,
+} from "./types.js";
 
 interface GlabMr {
   iid: number;
@@ -48,10 +55,46 @@ export class GitLabHost implements Host {
       headRef: mr.source_branch,
       headSha: mr.diff_refs?.head_sha ?? mr.sha,
     };
-    return { meta, diffText: diff.stdout };
+    return { meta, diffText: diff.stdout, comments: await this.fetchComments() };
   }
 
-  async postReview(comments: ReviewComment[], summary: string): Promise<{ url: string }> {
+  private async fetchComments(): Promise<ExistingComment[]> {
+    try {
+      const res = await this.run("glab", [
+        "api", "--paginate",
+        `projects/${this.projectPath}/merge_requests/${this.id}/discussions`,
+      ]);
+      const discussions = JSON.parse(res.stdout) as Array<{
+        notes: Array<{
+          system: boolean;
+          body: string;
+          author: { username: string } | null;
+          position: { new_path: string; new_line: number | null } | null;
+        }>;
+      }>;
+      const out: ExistingComment[] = [];
+      for (const d of discussions) {
+        for (const n of d.notes ?? []) {
+          if (n.system || !n.position || !n.position.new_line) continue;
+          out.push({
+            path: n.position.new_path,
+            line: n.position.new_line,
+            author: n.author?.username ?? "unknown",
+            body: n.body,
+          });
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  async postReview(
+    comments: ReviewComment[],
+    summary: string,
+    action: ReviewAction,
+  ): Promise<{ url: string }> {
     const mr = await this.fetchMr();
     const refs = mr.diff_refs;
     if (!refs) throw new Error("GitLab MR has no diff_refs; cannot anchor inline comments.");
@@ -75,6 +118,14 @@ export class GitLabHost implements Host {
       await this.run("glab", [
         "api", "--method", "POST", `${base}/notes`, "-f", `body=${summary}`,
       ]);
+    }
+
+    // GitLab has no single "review event": approve/unapprove are separate endpoints.
+    if (action === "approve") {
+      await this.run("glab", ["api", "--method", "POST", `${base}/approve`]);
+    } else if (action === "request_changes") {
+      // Closest analog: remove any existing approval (best-effort).
+      await this.run("glab", ["api", "--method", "POST", `${base}/unapprove`]).catch(() => {});
     }
 
     return { url: mr.web_url };

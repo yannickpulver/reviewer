@@ -1,15 +1,16 @@
 import type { Group, ResolvedHunk } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { blocksForRefs } from "@/lib/diff";
-import { DiffView, type CommentsApi } from "./DiffView";
+import { DiffView, type CommentsApi, type ExistingLookup } from "./DiffView";
 
 interface Props {
   section: Group;
   index: Map<string, ResolvedHunk>;
   comments: CommentsApi;
+  existing: ExistingLookup;
 }
 
-export function SectionContent({ section, index, comments }: Props) {
+export function SectionContent({ section, index, comments, existing }: Props) {
   const blocks = blocksForRefs(section.hunks, index);
 
   return (
@@ -27,7 +28,7 @@ export function SectionContent({ section, index, comments }: Props) {
       {blocks.map((block, i) => (
         <div key={`${block.path}-${i}`} className="space-y-1">
           <div className="font-mono text-xs text-muted-foreground">{block.path}</div>
-          <DiffView path={block.path} hunks={block.hunks} comments={comments} />
+          <DiffView path={block.path} hunks={block.hunks} comments={comments} existing={existing} />
         </div>
       ))}
     </div>

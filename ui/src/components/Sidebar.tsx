@@ -1,4 +1,4 @@
-import { GitPullRequest } from "lucide-react";
+import { GitPullRequest, MessageSquare } from "lucide-react";
 import type { Group, PullMeta } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -8,10 +8,11 @@ interface Props {
   sections: Group[];
   active: number;
   counts: number[];
+  existingCounts: number[];
   onSelect: (index: number) => void;
 }
 
-export function Sidebar({ meta, sections, active, counts, onSelect }: Props) {
+export function Sidebar({ meta, sections, active, counts, existingCounts, onSelect }: Props) {
   return (
     <aside className="flex h-screen w-80 shrink-0 flex-col border-r bg-card">
       <div className="space-y-1 border-b px-4 py-4">
@@ -41,11 +42,15 @@ export function Sidebar({ meta, sections, active, counts, onSelect }: Props) {
           >
             <div className="flex items-center gap-2">
               <Badge variant={s.importance}>{s.importance}</Badge>
-              {counts[i]! > 0 && (
-                <Badge variant="outline" className="ml-auto">
-                  {counts[i]}
-                </Badge>
-              )}
+              <div className="ml-auto flex items-center gap-1.5">
+                {existingCounts[i]! > 0 && (
+                  <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                    <MessageSquare className="size-3" />
+                    {existingCounts[i]}
+                  </span>
+                )}
+                {counts[i]! > 0 && <Badge variant="outline">{counts[i]}</Badge>}
+              </div>
             </div>
             <div className="mt-1 truncate text-sm font-medium">{s.title}</div>
             <div className="truncate text-xs text-muted-foreground">

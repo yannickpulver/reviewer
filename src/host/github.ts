@@ -1,5 +1,18 @@
 import type { Runner } from "../util/exec.js";
-import type { FetchResult, Host, PullMeta, ReviewComment } from "./types.js";
+import type {
+  ExistingComment,
+  FetchResult,
+  Host,
+  PullMeta,
+  ReviewAction,
+  ReviewComment,
+} from "./types.js";
+
+const GH_EVENT: Record<ReviewAction, string> = {
+  comment: "COMMENT",
+  approve: "APPROVE",
+  request_changes: "REQUEST_CHANGES",
+};
 
 interface GhView {
   number: number;
@@ -60,10 +73,42 @@ export class GitHubHost implements Host {
       headRef: v.headRefName,
       headSha: v.headRefOid,
     };
-    return { meta, diffText: diff.stdout };
+    return { meta, diffText: diff.stdout, comments: await this.fetchComments() };
   }
 
-  async postReview(comments: ReviewComment[], summary: string): Promise<{ url: string }> {
+  private async fetchComments(): Promise<ExistingComment[]> {
+    try {
+      const res = await this.run("gh", [
+        "api", ...this.hostArgs(), "--paginate",
+        `repos/${this.ownerRepo}/pulls/${this.id}/comments`,
+      ]);
+      const raw = JSON.parse(res.stdout) as Array<{
+        path: string;
+        line: number | null;
+        original_line: number | null;
+        side: string | null;
+        user: { login: string } | null;
+        body: string;
+      }>;
+      return raw
+        .filter((c) => c.side !== "LEFT")
+        .map((c) => ({
+          path: c.path,
+          line: c.line ?? c.original_line ?? 0,
+          author: c.user?.login ?? "unknown",
+          body: c.body,
+        }))
+        .filter((c) => c.line > 0);
+    } catch {
+      return []; // comments are best-effort; never block the review
+    }
+  }
+
+  async postReview(
+    comments: ReviewComment[],
+    summary: string,
+    action: ReviewAction,
+  ): Promise<{ url: string }> {
     const view = await this.run("gh", [
       "pr", "view", String(this.id), "--repo", this.repo, "--json", "headRefOid",
     ]);
@@ -72,7 +117,7 @@ export class GitHubHost implements Host {
     const body = {
       commit_id: headSha,
       body: summary,
-      event: "COMMENT",
+      event: GH_EVENT[action],
       comments: comments.map((c) => ({
         path: c.path,
         line: c.line,

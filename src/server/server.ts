@@ -41,7 +41,8 @@ export function startServer(
       return c.json({ error: "comments must be an array" }, 400);
     }
     try {
-      const result = await host.postReview(body.comments, body.summary ?? "");
+      const action = body.action ?? "comment";
+      const result = await host.postReview(body.comments, body.summary ?? "", action);
       return c.json(result);
     } catch (err) {
       return c.json({ error: (err as Error).message }, 502);

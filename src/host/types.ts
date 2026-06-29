@@ -21,16 +21,34 @@ export interface ReviewComment {
   body: string;
 }
 
+/** The verdict attached to a submitted review. */
+export type ReviewAction = "comment" | "approve" | "request_changes";
+
+/** An existing inline comment already on the PR/MR, anchored to a new-side line. */
+export interface ExistingComment {
+  path: string;
+  /** 1-based line in the new file */
+  line: number;
+  author: string;
+  body: string;
+}
+
 export interface FetchResult {
   meta: PullMeta;
   /** Raw unified diff text */
   diffText: string;
+  /** Inline comments already left by reviewers */
+  comments: ExistingComment[];
 }
 
 export interface Host {
   kind: HostKind;
   fetch(): Promise<FetchResult>;
-  postReview(comments: ReviewComment[], summary: string): Promise<{ url: string }>;
+  postReview(
+    comments: ReviewComment[],
+    summary: string,
+    action: ReviewAction,
+  ): Promise<{ url: string }>;
 }
 
 /** Where the PR/MR lives, resolved from a URL or the local repo remote. */

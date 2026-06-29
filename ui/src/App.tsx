@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
-import type { Group, ReviewComment, ReviewPayload } from "./types";
+import type { Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
 import { getReview, submitReview } from "./api";
 import { indexHunks, lineKey } from "./lib/diff";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Sidebar } from "./components/Sidebar";
 import { SectionContent } from "./components/SectionContent";
-import type { CommentsApi } from "./components/DiffView";
+import type { CommentsApi, ExistingLookup } from "./components/DiffView";
 
 export function App() {
   const [payload, setPayload] = useState<ReviewPayload | null>(null);
@@ -15,6 +16,7 @@ export function App() {
   const [comments, setComments] = useState<Record<string, ReviewComment>>({});
   const [active, setActive] = useState(0);
   const [summary, setSummary] = useState("");
+  const [action, setAction] = useState<ReviewAction>("comment");
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
@@ -41,6 +43,20 @@ export function App() {
 
   const index = useMemo(() => (payload ? indexHunks(payload.files) : new Map()), [payload]);
 
+  const existingByLine = useMemo(() => {
+    const m = new Map<string, ReviewPayload["existingComments"]>();
+    for (const c of payload?.existingComments ?? []) {
+      const k = lineKey(c.path, c.line);
+      const arr = m.get(k) ?? [];
+      arr.push(c);
+      m.set(k, arr);
+    }
+    return m;
+  }, [payload]);
+
+  const existingLookup: ExistingLookup = (path, line) =>
+    existingByLine.get(lineKey(path, line)) ?? [];
+
   const sections: Group[] = useMemo(() => {
     if (!payload) return [];
     const list = [...payload.grouping.groups];
@@ -57,7 +73,7 @@ export function App() {
 
   const commentList = Object.values(comments);
 
-  const counts = useMemo(
+  const sectionKeys = useMemo(
     () =>
       sections.map((s) => {
         const keys = new Set<string>();
@@ -68,16 +84,29 @@ export function App() {
             if (l.newLineNo !== null) keys.add(lineKey(resolved.path, l.newLineNo));
           }
         }
-        return commentList.filter((c) => keys.has(lineKey(c.path, c.line))).length;
+        return keys;
       }),
-    [sections, index, commentList],
+    [sections, index],
+  );
+
+  const counts = sectionKeys.map(
+    (keys) => commentList.filter((c) => keys.has(lineKey(c.path, c.line))).length,
+  );
+
+  const existingCounts = useMemo(
+    () =>
+      sectionKeys.map(
+        (keys) =>
+          (payload?.existingComments ?? []).filter((c) => keys.has(lineKey(c.path, c.line))).length,
+      ),
+    [sectionKeys, payload],
   );
 
   async function doSubmit() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const { url } = await submitReview(commentList, summary);
+      const { url } = await submitReview(commentList, summary, action);
       setSubmitted(url);
       setConfirming(false);
     } catch (e) {
@@ -105,13 +134,19 @@ export function App() {
         sections={sections}
         active={active}
         counts={counts}
+        existingCounts={existingCounts}
         onSelect={setActive}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto px-6 py-6">
           {current ? (
-            <SectionContent section={current} index={index} comments={commentsApi} />
+            <SectionContent
+              section={current}
+              index={index}
+              comments={commentsApi}
+              existing={existingLookup}
+            />
           ) : (
             <p className="text-muted-foreground">No changes.</p>
           )}
@@ -129,6 +164,8 @@ export function App() {
           count={commentList.length}
           summary={summary}
           setSummary={setSummary}
+          action={action}
+          setAction={setAction}
           submitting={submitting}
           error={submitError}
           onConfirm={doSubmit}
@@ -166,7 +203,7 @@ function SubmitBar({
             <span className="text-sm text-muted-foreground">
               {count} pending comment{count === 1 ? "" : "s"}
             </span>
-            <Button className="ml-auto" disabled={count === 0} onClick={onSubmit}>
+            <Button className="ml-auto" onClick={onSubmit}>
               Submit review
             </Button>
           </>
@@ -176,10 +213,18 @@ function SubmitBar({
   );
 }
 
+const ACTIONS: { value: ReviewAction; label: string; hint: string }[] = [
+  { value: "comment", label: "Comment", hint: "Leave feedback without an explicit verdict." },
+  { value: "approve", label: "Approve", hint: "Approve the changes." },
+  { value: "request_changes", label: "Request changes", hint: "Ask for changes before merge." },
+];
+
 function ConfirmDialog({
   count,
   summary,
   setSummary,
+  action,
+  setAction,
   submitting,
   error,
   onConfirm,
@@ -188,18 +233,47 @@ function ConfirmDialog({
   count: number;
   summary: string;
   setSummary: (s: string) => void;
+  action: ReviewAction;
+  setAction: (a: ReviewAction) => void;
   submitting: boolean;
   error: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  // A plain "comment" review needs at least one comment or a summary.
+  const blocked = action === "comment" && count === 0 && !summary.trim();
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md space-y-4 rounded-lg border bg-card p-5 shadow-xl">
         <h2 className="text-lg font-semibold">Submit review</h2>
         <p className="text-sm text-muted-foreground">
-          This will post {count} inline comment{count === 1 ? "" : "s"} as a single review.
+          {count} inline comment{count === 1 ? "" : "s"} will be posted as a single review.
         </p>
+
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">Verdict</label>
+          <div className="grid grid-cols-3 gap-2">
+            {ACTIONS.map((a) => (
+              <button
+                key={a.value}
+                onClick={() => setAction(a.value)}
+                className={cn(
+                  "rounded-md border px-2 py-2 text-xs font-medium transition-colors",
+                  action === a.value
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "hover:bg-muted",
+                )}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {ACTIONS.find((a) => a.value === action)!.hint}
+          </p>
+        </div>
+
         <div className="space-y-1">
           <label className="text-sm font-medium">Overall summary (optional)</label>
           <Textarea
@@ -213,9 +287,9 @@ function ConfirmDialog({
           <Button variant="ghost" onClick={onCancel} disabled={submitting}>
             Cancel
           </Button>
-          <Button onClick={onConfirm} disabled={submitting}>
+          <Button onClick={onConfirm} disabled={submitting || blocked}>
             {submitting && <Loader2 className="size-4 animate-spin" />}
-            Submit
+            {ACTIONS.find((a) => a.value === action)!.label}
           </Button>
         </div>
       </div>

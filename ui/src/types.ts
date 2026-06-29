@@ -56,11 +56,21 @@ export interface ReviewPayload {
   meta: PullMeta;
   files: DiffFile[];
   grouping: Grouping;
+  existingComments: ExistingComment[];
 }
 
 export interface ReviewComment {
   path: string;
   line: number;
+  body: string;
+}
+
+export type ReviewAction = "comment" | "approve" | "request_changes";
+
+export interface ExistingComment {
+  path: string;
+  line: number;
+  author: string;
   body: string;
 }
 

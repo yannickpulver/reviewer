@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
-import type { DiffLine, Hunk } from "@/types";
+import type { DiffLine, ExistingComment, Hunk } from "@/types";
 import { cn } from "@/lib/utils";
 import { lineKey } from "@/lib/diff";
 import { CommentEditor } from "./CommentEditor";
@@ -11,13 +11,17 @@ export interface CommentsApi {
   remove: (path: string, line: number) => void;
 }
 
+/** Read-only existing comments looked up by new-side line. */
+export type ExistingLookup = (path: string, line: number) => ExistingComment[];
+
 interface Props {
   path: string;
   hunks: Hunk[];
   comments: CommentsApi;
+  existing: ExistingLookup;
 }
 
-export function DiffView({ path, hunks, comments }: Props) {
+export function DiffView({ path, hunks, comments, existing }: Props) {
   const [editing, setEditing] = useState<Set<string>>(new Set());
 
   const toggle = (key: string, on: boolean) =>
@@ -40,6 +44,7 @@ export function DiffView({ path, hunks, comments }: Props) {
               editing={editing}
               toggleEditing={toggle}
               comments={comments}
+              existing={existing}
             />
           ))}
         </tbody>
@@ -55,6 +60,7 @@ function HunkRows({
   editing,
   toggleEditing,
   comments,
+  existing,
 }: {
   path: string;
   hunk: Hunk;
@@ -62,6 +68,7 @@ function HunkRows({
   editing: Set<string>;
   toggleEditing: (key: string, on: boolean) => void;
   comments: CommentsApi;
+  existing: ExistingLookup;
 }) {
   return (
     <>
@@ -78,6 +85,7 @@ function HunkRows({
           editing={editing}
           toggleEditing={toggleEditing}
           comments={comments}
+          existing={existing}
         />
       ))}
     </>
@@ -90,17 +98,20 @@ function LineRow({
   editing,
   toggleEditing,
   comments,
+  existing,
 }: {
   path: string;
   line: DiffLine;
   editing: Set<string>;
   toggleEditing: (key: string, on: boolean) => void;
   comments: CommentsApi;
+  existing: ExistingLookup;
 }) {
   // Comments anchor to the new (right) side; deleted lines aren't commentable.
   const commentable = line.newLineNo !== null;
   const key = commentable ? lineKey(path, line.newLineNo!) : null;
-  const existing = key ? comments.get(path, line.newLineNo!) : undefined;
+  const draft = key ? comments.get(path, line.newLineNo!) : undefined;
+  const priorComments = commentable ? existing(path, line.newLineNo!) : [];
   const isEditing = key ? editing.has(key) : false;
 
   const rowBg =
@@ -135,12 +146,29 @@ function LineRow({
         </td>
       </tr>
 
-      {existing && key && !isEditing && (
+      {priorComments.length > 0 && (
+        <tr>
+          <td colSpan={4} className="px-3 py-2">
+            <div className="space-y-2 font-sans text-sm">
+              {priorComments.map((c, i) => (
+                <div key={i} className="rounded-md border border-dashed bg-muted/20 p-3">
+                  <div className="mb-1 text-xs font-medium text-muted-foreground">
+                    {c.author}
+                  </div>
+                  <p className="whitespace-pre-wrap">{c.body}</p>
+                </div>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+
+      {draft && key && !isEditing && (
         <tr>
           <td colSpan={4} className="px-3 py-2">
             <div className="rounded-md border bg-muted/30 p-3 font-sans text-sm">
               <div className="flex items-start gap-2">
-                <p className="flex-1 whitespace-pre-wrap">{existing}</p>
+                <p className="flex-1 whitespace-pre-wrap">{draft}</p>
                 <button
                   aria-label="Edit comment"
                   className="text-muted-foreground hover:text-foreground"
@@ -166,7 +194,7 @@ function LineRow({
           <td colSpan={4}>
             <div className="border-y bg-muted/20 font-sans">
               <CommentEditor
-                initial={existing}
+                initial={draft}
                 onSave={(body) => {
                   comments.save(path, line.newLineNo!, body);
                   toggleEditing(key, false);

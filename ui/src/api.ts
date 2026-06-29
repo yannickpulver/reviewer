@@ -1,4 +1,4 @@
-import type { ReviewComment, ReviewPayload } from "./types";
+import type { ReviewAction, ReviewComment, ReviewPayload } from "./types";
 
 export async function getReview(): Promise<ReviewPayload> {
   const res = await fetch("/api/review");
@@ -9,11 +9,12 @@ export async function getReview(): Promise<ReviewPayload> {
 export async function submitReview(
   comments: ReviewComment[],
   summary: string,
+  action: ReviewAction,
 ): Promise<{ url: string }> {
   const res = await fetch("/api/review", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ comments, summary }),
+    body: JSON.stringify({ comments, summary, action }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? `Submit failed (${res.status})`);
