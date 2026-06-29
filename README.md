@@ -9,6 +9,8 @@ submit them back as a single review.
 Everything runs locally. The only network calls are the ones `gh`/`glab` already
 make on your behalf.
 
+![Reviewer UI — grouped sections in the sidebar, the selected group's diff with an inline reviewer comment, and the submit bar](docs/screenshot.png)
+
 ## How it works
 
 ```
@@ -55,9 +57,11 @@ Options:
 | `--no-open`  | Don't open the browser automatically         |
 | `-h`         | Help                                         |
 
-In the browser: high/medium-importance groups are expanded, low-importance ones
-collapsed. Hover a line and click the comment icon to leave an inline note. Click
-**Submit review** to post all comments at once (with an optional overall summary).
+In the browser: pick a group from the sidebar to view its diff in the main panel.
+Existing reviewer comments are shown inline (read-only). Hover a line and click the
+comment icon to draft your own note. Click **Submit review** to post all comments at
+once as a single review, choosing a verdict — **Comment**, **Approve**, or **Request
+changes** — with an optional overall summary.
 
 ## Development
 
