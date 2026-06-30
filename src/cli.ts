@@ -54,8 +54,11 @@ async function pickOpenPull(): Promise<Host> {
 
 function printPullList(pulls: PullSummary[]) {
   const width = String(pulls.length).length;
+  const reviewCount = pulls.filter((p) => p.reviewRequestedFromMe).length;
   console.error("\nOpen PRs/MRs:");
   for (const [i, p] of pulls.entries()) {
+    // Divider between PRs/MRs awaiting my review and the rest.
+    if (reviewCount > 0 && i === reviewCount) console.error("  ──────");
     const n = String(i + 1).padStart(width);
     const draft = p.state === "draft" ? " (draft)" : "";
     console.error(`  ${n}. #${p.id}  ${p.title}${draft}  — ${p.author}`);
