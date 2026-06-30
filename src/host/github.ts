@@ -4,6 +4,7 @@ import type {
   FetchResult,
   Host,
   PullMeta,
+  PullState,
   ReviewAction,
   ReviewComment,
 } from "./types.js";
@@ -14,6 +15,14 @@ const GH_EVENT: Record<ReviewAction, string> = {
   request_changes: "REQUEST_CHANGES",
 };
 
+/** Map gh's state (OPEN/CLOSED/MERGED) + draft flag to a normalized state. */
+function ghState(v: { state: string; isDraft: boolean }): PullState {
+  const s = (v.state ?? "").toUpperCase();
+  if (s === "MERGED") return "merged";
+  if (s === "CLOSED") return "closed";
+  return v.isDraft ? "draft" : "open";
+}
+
 interface GhView {
   number: number;
   title: string;
@@ -22,6 +31,8 @@ interface GhView {
   baseRefName: string;
   headRefName: string;
   headRefOid: string;
+  state: string;
+  isDraft: boolean;
 }
 
 export class GitHubHost implements Host {
@@ -57,7 +68,7 @@ export class GitHubHost implements Host {
     const view = await this.run("gh", [
       "pr", "view", String(this.id),
       "--repo", this.repo,
-      "--json", "number,title,author,url,baseRefName,headRefName,headRefOid",
+      "--json", "number,title,author,url,baseRefName,headRefName,headRefOid,state,isDraft",
     ]);
     const v = JSON.parse(view.stdout) as GhView;
 
@@ -72,6 +83,7 @@ export class GitHubHost implements Host {
       baseRef: v.baseRefName,
       headRef: v.headRefName,
       headSha: v.headRefOid,
+      state: ghState(v),
     };
     return { meta, diffText: diff.stdout, comments: await this.fetchComments() };
   }

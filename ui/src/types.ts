@@ -41,6 +41,8 @@ export interface Grouping {
   ungrouped: string[];
 }
 
+export type PullState = "open" | "draft" | "merged" | "closed";
+
 export interface PullMeta {
   host: "github" | "gitlab";
   id: number;
@@ -50,6 +52,7 @@ export interface PullMeta {
   baseRef: string;
   headRef: string;
   headSha: string;
+  state: PullState;
 }
 
 export interface ReviewPayload {

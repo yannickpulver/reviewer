@@ -4,6 +4,7 @@ import type { DiffLine, ExistingComment, Hunk } from "@/types";
 import { cn } from "@/lib/utils";
 import { lineKey } from "@/lib/diff";
 import { CommentEditor } from "./CommentEditor";
+import { Markdown } from "./Markdown";
 
 export interface CommentsApi {
   get: (path: string, line: number) => string | undefined;
@@ -155,7 +156,7 @@ function LineRow({
                   <div className="mb-1 text-xs font-medium text-muted-foreground">
                     {c.author}
                   </div>
-                  <p className="whitespace-pre-wrap">{c.body}</p>
+                  <Markdown>{c.body}</Markdown>
                 </div>
               ))}
             </div>
@@ -168,7 +169,7 @@ function LineRow({
           <td colSpan={4} className="px-3 py-2">
             <div className="rounded-md border bg-muted/30 p-3 font-sans text-sm">
               <div className="flex items-start gap-2">
-                <p className="flex-1 whitespace-pre-wrap">{draft}</p>
+                <Markdown className="flex-1">{draft}</Markdown>
                 <button
                   aria-label="Edit comment"
                   className="text-muted-foreground hover:text-foreground"

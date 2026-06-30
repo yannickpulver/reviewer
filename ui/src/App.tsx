@@ -15,6 +15,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<string, ReviewComment>>({});
   const [active, setActive] = useState(0);
+  const [reviewed, setReviewed] = useState<Set<number>>(new Set());
   const [summary, setSummary] = useState("");
   const [action, setAction] = useState<ReviewAction>("comment");
   const [confirming, setConfirming] = useState(false);
@@ -127,6 +128,13 @@ export function App() {
 
   const current = sections[active];
 
+  const toggleReviewed = (i: number) =>
+    setReviewed((prev) => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar
@@ -135,6 +143,7 @@ export function App() {
         active={active}
         counts={counts}
         existingCounts={existingCounts}
+        reviewed={reviewed}
         onSelect={setActive}
       />
 
@@ -146,6 +155,8 @@ export function App() {
               index={index}
               comments={commentsApi}
               existing={existingLookup}
+              reviewed={reviewed.has(active)}
+              onToggleReviewed={() => toggleReviewed(active)}
             />
           ) : (
             <p className="text-muted-foreground">No changes.</p>

@@ -4,6 +4,7 @@ import type {
   FetchResult,
   Host,
   PullMeta,
+  PullState,
   ReviewAction,
   ReviewComment,
 } from "./types.js";
@@ -17,6 +18,16 @@ interface GlabMr {
   target_branch: string;
   sha: string;
   diff_refs: { base_sha: string; head_sha: string; start_sha: string } | null;
+  state: string;
+  draft?: boolean;
+  work_in_progress?: boolean;
+}
+
+/** Map GitLab's state (opened/closed/merged/locked) + draft flag to a normalized state. */
+function glState(mr: GlabMr): PullState {
+  if (mr.state === "merged") return "merged";
+  if (mr.state === "closed" || mr.state === "locked") return "closed";
+  return mr.draft || mr.work_in_progress ? "draft" : "open";
 }
 
 export class GitLabHost implements Host {
@@ -54,6 +65,7 @@ export class GitLabHost implements Host {
       baseRef: mr.target_branch,
       headRef: mr.source_branch,
       headSha: mr.diff_refs?.head_sha ?? mr.sha,
+      state: glState(mr),
     };
     return { meta, diffText: diff.stdout, comments: await this.fetchComments() };
   }
