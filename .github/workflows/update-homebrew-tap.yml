@@ -1,0 +1,82 @@
+name: Update Homebrew Tap
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag and version
+        id: ver
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download asset and compute sha256
+        id: sha
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.ver.outputs.tag }}/reviewer-$V.tgz"
+          curl -fsSL -o asset.tgz "$URL"
+          SHA=$(sha256sum asset.tgz | cut -d' ' -f1)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tap
+        uses: actions/checkout@v4
+        with:
+          repository: yannickpulver/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Write formula
+        run: |
+          mkdir -p tap/Formula
+          cat > tap/Formula/reviewer.rb <<EOF
+          class Reviewer < Formula
+            desc "Local CLI that groups a PR/MR diff with Claude Code and serves a review UI"
+            homepage "https://github.com/yannickpulver/reviewer"
+            url "https://github.com/yannickpulver/reviewer/releases/download/v#{version}/reviewer-#{version}.tgz"
+            sha256 "${{ steps.sha.outputs.sha256 }}"
+            version "${{ steps.ver.outputs.version }}"
+            license "MIT"
+
+            depends_on "node"
+
+            def install
+              system "npm", "install", *Language::Node.std_npm_install_args(libexec)
+              bin.install_symlink Dir["#{libexec}/bin/*"]
+            end
+
+            test do
+              assert_match "reviewer", shell_output("#{bin}/reviewer --help")
+            end
+          end
+          EOF
+
+      - name: Commit and push
+        run: |
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/reviewer.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "reviewer ${{ steps.ver.outputs.version }}"
+          git push
