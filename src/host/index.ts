@@ -12,6 +12,8 @@ export interface PullSummary {
   title: string;
   author: string;
   state: PullState;
+  /** Whether the current user is a requested reviewer of this PR/MR. */
+  reviewRequestedFromMe: boolean;
 }
 
 /** Resolve a Host implementation from a CLI argument (PR/MR number or URL). */
@@ -89,37 +91,53 @@ export async function listOpenPulls(
     host === "github"
       ? await listGitHubPulls(repo, run)
       : await listGitLabPulls(repo, run);
+  // Stable sort: PRs/MRs where the current user is a requested reviewer float up.
+  pulls.sort((a, b) => Number(b.reviewRequestedFromMe) - Number(a.reviewRequestedFromMe));
   return { host, repo, pulls };
 }
 
 async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]> {
-  const res = await run("gh", [
-    "pr", "list", "--repo", repo, "--state", "open",
-    "--json", "number,title,author,isDraft",
+  // Enterprise repos are qualified as `host/owner/repo`; `gh api user` must
+  // target that host or it returns the default github.com identity instead.
+  const host = ghHostFromRepo(repo);
+  const userArgs = ["api", "user", "--jq", ".login"];
+  if (host) userArgs.push("--hostname", host);
+  const [res, me] = await Promise.all([
+    run("gh", [
+      "pr", "list", "--repo", repo, "--state", "open",
+      "--json", "number,title,author,isDraft,reviewRequests",
+    ]),
+    currentLogin("gh", userArgs, run),
   ]);
   const raw = JSON.parse(res.stdout) as Array<{
     number: number;
     title: string;
     author: { login: string } | null;
     isDraft: boolean;
+    reviewRequests: Array<{ login?: string }> | null;
   }>;
   return raw.map((p) => ({
     id: p.number,
     title: p.title,
     author: p.author?.login ?? "unknown",
     state: p.isDraft ? "draft" : "open",
+    reviewRequestedFromMe: !!me && (p.reviewRequests ?? []).some((r) => r.login === me),
   }));
 }
 
 async function listGitLabPulls(repo: string, run: Runner): Promise<PullSummary[]> {
-  const res = await run("glab", [
-    "api",
-    `projects/${encodeURIComponent(repo)}/merge_requests?state=opened&per_page=100`,
+  const [res, me] = await Promise.all([
+    run("glab", [
+      "api",
+      `projects/${encodeURIComponent(repo)}/merge_requests?state=opened&per_page=100`,
+    ]),
+    currentLogin("glab", ["api", "user"], run, (s) => JSON.parse(s).username),
   ]);
   const raw = JSON.parse(res.stdout) as Array<{
     iid: number;
     title: string;
     author: { username: string } | null;
+    reviewers?: Array<{ username: string }> | null;
     draft?: boolean;
     work_in_progress?: boolean;
   }>;
@@ -128,7 +146,22 @@ async function listGitLabPulls(repo: string, run: Runner): Promise<PullSummary[]
     title: m.title,
     author: m.author?.username ?? "unknown",
     state: m.draft || m.work_in_progress ? "draft" : "open",
+    reviewRequestedFromMe: !!me && (m.reviewers ?? []).some((r) => r.username === me),
   }));
+}
+
+/** Resolve the authenticated user's login; returns "" if unavailable. */
+async function currentLogin(
+  cli: "gh" | "glab",
+  args: string[],
+  run: Runner,
+  parse: (stdout: string) => string = (s) => s,
+): Promise<string> {
+  try {
+    return parse((await run(cli, args)).stdout).trim();
+  } catch {
+    return "";
+  }
 }
 
 function makeHost(target: Target, run: Runner): Host {
@@ -181,6 +214,12 @@ function ghQualify(host: string, nameWithOwner: string): string {
   return host && host.toLowerCase() !== "github.com"
     ? `${host}/${nameWithOwner}`
     : nameWithOwner;
+}
+
+/** Extract the Enterprise host from a `host/owner/repo` ref, else "" for github.com. */
+function ghHostFromRepo(repo: string): string {
+  const parts = repo.split("/");
+  return parts.length >= 3 ? parts[0]! : "";
 }
 
 /** Extract the hostname from an scp-style (`user@host:path`) or URL remote. */
