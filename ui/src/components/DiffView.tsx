@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import { MessageSquarePlus, Pencil, Sparkles, Trash2 } from "lucide-react";
 import type { DiffLine, ExistingComment, Hunk } from "@/types";
 import { cn } from "@/lib/utils";
-import { lineKey } from "@/lib/diff";
+import { hunkToText, lineKey } from "@/lib/diff";
+import { AskBox } from "./AskBox";
 import { CommentEditor } from "./CommentEditor";
 import { Markdown } from "./Markdown";
 
@@ -22,15 +23,21 @@ interface Props {
   existing: ExistingLookup;
 }
 
-export function DiffView({ path, hunks, comments, existing }: Props) {
-  const [editing, setEditing] = useState<Set<string>>(new Set());
-
-  const toggle = (key: string, on: boolean) =>
-    setEditing((prev) => {
+function toggler(setter: React.Dispatch<React.SetStateAction<Set<string>>>) {
+  return (key: string, on: boolean) =>
+    setter((prev) => {
       const next = new Set(prev);
       on ? next.add(key) : next.delete(key);
       return next;
     });
+}
+
+export function DiffView({ path, hunks, comments, existing }: Props) {
+  const [editing, setEditing] = useState<Set<string>>(new Set());
+  const [asking, setAsking] = useState<Set<string>>(new Set());
+
+  const toggleEditing = toggler(setEditing);
+  const toggleAsking = toggler(setAsking);
 
   return (
     <div className="overflow-x-auto rounded-md border bg-card">
@@ -43,7 +50,9 @@ export function DiffView({ path, hunks, comments, existing }: Props) {
               hunk={hunk}
               showSep={hi > 0}
               editing={editing}
-              toggleEditing={toggle}
+              toggleEditing={toggleEditing}
+              asking={asking}
+              toggleAsking={toggleAsking}
               comments={comments}
               existing={existing}
             />
@@ -60,6 +69,8 @@ function HunkRows({
   showSep,
   editing,
   toggleEditing,
+  asking,
+  toggleAsking,
   comments,
   existing,
 }: {
@@ -68,9 +79,12 @@ function HunkRows({
   showSep: boolean;
   editing: Set<string>;
   toggleEditing: (key: string, on: boolean) => void;
+  asking: Set<string>;
+  toggleAsking: (key: string, on: boolean) => void;
   comments: CommentsApi;
   existing: ExistingLookup;
 }) {
+  const hunkText = hunkToText(hunk);
   return (
     <>
       <tr className={cn("text-muted-foreground", showSep && "border-t")}>
@@ -83,8 +97,11 @@ function HunkRows({
           key={i}
           path={path}
           line={line}
+          hunkText={hunkText}
           editing={editing}
           toggleEditing={toggleEditing}
+          asking={asking}
+          toggleAsking={toggleAsking}
           comments={comments}
           existing={existing}
         />
@@ -96,15 +113,21 @@ function HunkRows({
 function LineRow({
   path,
   line,
+  hunkText,
   editing,
   toggleEditing,
+  asking,
+  toggleAsking,
   comments,
   existing,
 }: {
   path: string;
   line: DiffLine;
+  hunkText: string;
   editing: Set<string>;
   toggleEditing: (key: string, on: boolean) => void;
+  asking: Set<string>;
+  toggleAsking: (key: string, on: boolean) => void;
   comments: CommentsApi;
   existing: ExistingLookup;
 }) {
@@ -114,6 +137,7 @@ function LineRow({
   const draft = key ? comments.get(path, line.newLineNo!) : undefined;
   const priorComments = commentable ? existing(path, line.newLineNo!) : [];
   const isEditing = key ? editing.has(key) : false;
+  const isAsking = key ? asking.has(key) : false;
 
   const rowBg =
     line.type === "add" ? "diff-add" : line.type === "del" ? "diff-del" : "";
@@ -130,15 +154,28 @@ function LineRow({
         <td className={cn("w-12 select-none px-2 text-right text-muted-foreground", gutterBg)}>
           {line.newLineNo ?? ""}
         </td>
-        <td className="w-6 select-none px-1 text-center text-muted-foreground">
-          {commentable && key && !isEditing && (
-            <button
-              aria-label="Add comment"
-              className="opacity-0 transition group-hover:opacity-100 hover:text-foreground"
-              onClick={() => toggleEditing(key, true)}
-            >
-              <MessageSquarePlus className="size-3.5" />
-            </button>
+        <td className="w-10 select-none px-1 text-center text-muted-foreground">
+          {commentable && key && (
+            <div className="flex items-center justify-center gap-1 opacity-0 transition group-hover:opacity-100">
+              {!isEditing && (
+                <button
+                  aria-label="Add comment"
+                  className="hover:text-foreground"
+                  onClick={() => toggleEditing(key, true)}
+                >
+                  <MessageSquarePlus className="size-3.5" />
+                </button>
+              )}
+              {!isAsking && (
+                <button
+                  aria-label="Ask Claude"
+                  className="hover:text-foreground"
+                  onClick={() => toggleAsking(key, true)}
+                >
+                  <Sparkles className="size-3.5" />
+                </button>
+              )}
+            </div>
           )}
         </td>
         <td className="whitespace-pre-wrap px-2 py-0.5">
@@ -201,6 +238,21 @@ function LineRow({
                   toggleEditing(key, false);
                 }}
                 onCancel={() => toggleEditing(key, false)}
+              />
+            </div>
+          </td>
+        </tr>
+      )}
+
+      {isAsking && key && (
+        <tr>
+          <td colSpan={4}>
+            <div className="border-y bg-muted/20">
+              <AskBox
+                path={path}
+                line={line.newLineNo!}
+                code={hunkText}
+                onClose={() => toggleAsking(key, false)}
               />
             </div>
           </td>

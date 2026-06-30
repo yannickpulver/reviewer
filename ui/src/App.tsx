@@ -152,6 +152,7 @@ export function App() {
           {current ? (
             <SectionContent
               section={current}
+              meta={payload.meta}
               index={index}
               comments={commentsApi}
               existing={existingLookup}

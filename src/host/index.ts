@@ -2,9 +2,17 @@ import { runCommand, type Runner } from "../util/exec.js";
 import { parseInput } from "./detect.js";
 import { GitHubHost, githubRepoFromCwd } from "./github.js";
 import { GitLabHost, projectPathFromRemote } from "./gitlab.js";
-import type { Host, HostKind, Target } from "./types.js";
+import type { Host, HostKind, PullState, Target } from "./types.js";
 
 export type { Host, HostKind, PullMeta, ReviewComment, FetchResult } from "./types.js";
+
+/** Lightweight open PR/MR entry for the picker. */
+export interface PullSummary {
+  id: number;
+  title: string;
+  author: string;
+  state: PullState;
+}
 
 /** Resolve a Host implementation from a CLI argument (PR/MR number or URL). */
 export async function resolveHost(input: string, run: Runner = runCommand): Promise<Host> {
@@ -36,8 +44,10 @@ export async function resolveHost(input: string, run: Runner = runCommand): Prom
   );
 }
 
-/** Resolve the open PR/MR for the current branch (no argument given). */
-export async function resolveCurrentBranchHost(run: Runner = runCommand): Promise<Host> {
+/** Resolve the host kind and repo path from the local origin remote. */
+async function resolveRepoFromRemote(
+  run: Runner,
+): Promise<{ host: HostKind; repo: string }> {
   let remote: string;
   try {
     remote = (await run("git", ["remote", "get-url", "origin"])).stdout.trim();
@@ -47,35 +57,78 @@ export async function resolveCurrentBranchHost(run: Runner = runCommand): Promis
     );
   }
   const host = await detectHostFromRemote(remote, run);
-
   if (host === "github") {
-    const repo = ghQualify(hostnameFromRemote(remote), await githubRepoFromCwd(run));
-    let id: number;
-    try {
-      const res = await run("gh", ["pr", "view", "--json", "number", "--jq", ".number"]);
-      id = Number(res.stdout.trim());
-    } catch {
-      throw new Error("No open PR found for the current branch.");
-    }
-    if (!id) throw new Error("No open PR found for the current branch.");
-    return new GitHubHost(id, repo, run);
+    return { host, repo: ghQualify(hostnameFromRemote(remote), await githubRepoFromCwd(run)) };
   }
-
   if (host === "gitlab") {
-    const repo = projectPathFromRemote(remote);
-    const branch = (await run("git", ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
-    const res = await run("glab", [
-      "api",
-      `projects/${encodeURIComponent(repo)}/merge_requests?source_branch=${encodeURIComponent(branch)}&state=opened`,
-    ]);
-    const list = JSON.parse(res.stdout) as Array<{ iid: number }>;
-    if (!list.length) throw new Error(`No open MR found for branch "${branch}".`);
-    return new GitLabHost(list[0]!.iid, repo, run);
+    return { host, repo: projectPathFromRemote(remote) };
   }
-
   throw new Error(
     `Could not tell if "${remote}" is GitHub or GitLab. Pass a PR/MR URL instead.`,
   );
+}
+
+/** Build a Host for a known kind/id/repo (e.g. a pick from the open-PR list). */
+export function hostForId(
+  kind: HostKind,
+  id: number,
+  repo: string,
+  run: Runner = runCommand,
+): Host {
+  return kind === "github"
+    ? new GitHubHost(id, repo, run)
+    : new GitLabHost(id, repo, run);
+}
+
+/** List open PRs/MRs for the repo of the current directory (no argument given). */
+export async function listOpenPulls(
+  run: Runner = runCommand,
+): Promise<{ host: HostKind; repo: string; pulls: PullSummary[] }> {
+  const { host, repo } = await resolveRepoFromRemote(run);
+  const pulls =
+    host === "github"
+      ? await listGitHubPulls(repo, run)
+      : await listGitLabPulls(repo, run);
+  return { host, repo, pulls };
+}
+
+async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]> {
+  const res = await run("gh", [
+    "pr", "list", "--repo", repo, "--state", "open",
+    "--json", "number,title,author,isDraft",
+  ]);
+  const raw = JSON.parse(res.stdout) as Array<{
+    number: number;
+    title: string;
+    author: { login: string } | null;
+    isDraft: boolean;
+  }>;
+  return raw.map((p) => ({
+    id: p.number,
+    title: p.title,
+    author: p.author?.login ?? "unknown",
+    state: p.isDraft ? "draft" : "open",
+  }));
+}
+
+async function listGitLabPulls(repo: string, run: Runner): Promise<PullSummary[]> {
+  const res = await run("glab", [
+    "api",
+    `projects/${encodeURIComponent(repo)}/merge_requests?state=opened&per_page=100`,
+  ]);
+  const raw = JSON.parse(res.stdout) as Array<{
+    iid: number;
+    title: string;
+    author: { username: string } | null;
+    draft?: boolean;
+    work_in_progress?: boolean;
+  }>;
+  return raw.map((m) => ({
+    id: m.iid,
+    title: m.title,
+    author: m.author?.username ?? "unknown",
+    state: m.draft || m.work_in_progress ? "draft" : "open",
+  }));
 }
 
 function makeHost(target: Target, run: Runner): Host {

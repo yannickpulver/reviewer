@@ -1,13 +1,15 @@
-import { Check } from "lucide-react";
-import type { Group, ResolvedHunk } from "@/types";
+import { Check, ExternalLink } from "lucide-react";
+import type { Group, PullMeta, ResolvedHunk } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { blocksForRefs } from "@/lib/diff";
+import { fileUrl } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import { DiffView, type CommentsApi, type ExistingLookup } from "./DiffView";
 
 interface Props {
   section: Group;
+  meta: PullMeta;
   index: Map<string, ResolvedHunk>;
   comments: CommentsApi;
   existing: ExistingLookup;
@@ -17,6 +19,7 @@ interface Props {
 
 export function SectionContent({
   section,
+  meta,
   index,
   comments,
   existing,
@@ -46,12 +49,27 @@ export function SectionContent({
         )}
       </div>
 
-      {blocks.map((block, i) => (
-        <div key={`${block.path}-${i}`} className="space-y-1">
-          <div className="font-mono text-xs text-muted-foreground">{block.path}</div>
-          <DiffView path={block.path} hunks={block.hunks} comments={comments} existing={existing} />
-        </div>
-      ))}
+      {blocks.map((block, i) => {
+        const href = fileUrl(meta, block.path);
+        return (
+          <div key={`${block.path}-${i}`} className="space-y-1">
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
+              >
+                {block.path}
+                <ExternalLink className="size-3" />
+              </a>
+            ) : (
+              <div className="font-mono text-xs text-muted-foreground">{block.path}</div>
+            )}
+            <DiffView path={block.path} hunks={block.hunks} comments={comments} existing={existing} />
+          </div>
+        );
+      })}
     </div>
   );
 }
