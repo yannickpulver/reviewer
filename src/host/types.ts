@@ -1,5 +1,8 @@
 export type HostKind = "github" | "gitlab";
 
+/** Normalized PR/MR lifecycle state. */
+export type PullState = "open" | "draft" | "merged" | "closed";
+
 export interface PullMeta {
   host: HostKind;
   /** PR number (GitHub) or MR iid (GitLab) */
@@ -11,6 +14,7 @@ export interface PullMeta {
   headRef: string;
   /** Head commit SHA — needed to anchor inline comments */
   headSha: string;
+  state: PullState;
 }
 
 /** A drafted inline comment, anchored to a line in the new (right) side of the diff. */
