@@ -3,6 +3,7 @@ import { join, normalize } from "node:path";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import type { Host } from "../host/types.js";
+import { askClaude, type AskInput } from "./ask.js";
 import { findUiDist } from "./paths.js";
 import type { ReviewPayload, SubmitBody } from "./payload.js";
 
@@ -44,6 +45,24 @@ export function startServer(
       const action = body.action ?? "comment";
       const result = await host.postReview(body.comments, body.summary ?? "", action);
       return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
+
+  app.post("/api/ask", async (c) => {
+    const body = (await c.req.json()) as Partial<AskInput>;
+    if (typeof body.question !== "string" || !body.question.trim()) {
+      return c.json({ error: "question is required" }, 400);
+    }
+    try {
+      const answer = await askClaude({
+        path: body.path ?? "",
+        line: typeof body.line === "number" ? body.line : 0,
+        code: body.code ?? "",
+        question: body.question,
+      });
+      return c.json({ answer });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 502);
     }

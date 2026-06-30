@@ -15,6 +15,8 @@ export interface GroupOptions {
   run?: Runner;
   /** Override the per-batch char budget (mainly for tests). */
   batchBudget?: number;
+  /** Claude model to pass to the CLI; omit to use the CLI's default. */
+  model?: string;
 }
 
 /** A single file's slice of the raw diff plus its known hunk refs. */
@@ -46,7 +48,7 @@ export async function groupDiff(
     const parts: Grouping[] = [];
     for (const batch of batches) {
       const knownRefs = batch.flatMap((s) => s.refs);
-      const raw = await callClaude(buildPrompt(batch), run);
+      const raw = await callClaude(buildPrompt(batch), run, opts.model);
       parts.push(reconcileGrouping(raw, knownRefs));
     }
     return sortByImportance(mergeGroupings(parts));
@@ -128,8 +130,10 @@ interface ClaudeEnvelope {
   is_error?: boolean;
 }
 
-async function callClaude(prompt: string, run: Runner): Promise<unknown> {
-  const { stdout } = await run("claude", ["-p", "--output-format", "json"], prompt);
+async function callClaude(prompt: string, run: Runner, model?: string): Promise<unknown> {
+  const args = ["-p", "--output-format", "json"];
+  if (model) args.push("--model", model);
+  const { stdout } = await run("claude", args, prompt);
   const env = JSON.parse(stdout) as ClaudeEnvelope;
   if (env.is_error || typeof env.result !== "string") {
     throw new Error("claude returned an error envelope");

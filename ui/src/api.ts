@@ -20,3 +20,19 @@ export async function submitReview(
   if (!res.ok) throw new Error(data.error ?? `Submit failed (${res.status})`);
   return data;
 }
+
+export async function askClaude(
+  path: string,
+  line: number,
+  code: string,
+  question: string,
+): Promise<{ answer: string }> {
+  const res = await fetch("/api/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, line, code, question }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `Ask failed (${res.status})`);
+  return data;
+}

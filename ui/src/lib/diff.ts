@@ -1,4 +1,4 @@
-import type { DiffFile, Hunk, ResolvedHunk } from "@/types";
+import type { DiffFile, Hunk, LineType, ResolvedHunk } from "@/types";
 
 /** Build a lookup of "path:Hn" → resolved hunk. */
 export function indexHunks(files: DiffFile[]): Map<string, ResolvedHunk> {
@@ -39,4 +39,11 @@ export function blocksForRefs(
 /** Stable key for a draftable comment anchor (new-side line). */
 export function lineKey(path: string, newLineNo: number): string {
   return `${path}::${newLineNo}`;
+}
+
+/** Render a hunk back to unified-diff text for use as model context. */
+export function hunkToText(hunk: Hunk): string {
+  const sign = (t: LineType) => (t === "add" ? "+" : t === "del" ? "-" : " ");
+  const body = hunk.lines.map((l) => sign(l.type) + l.content).join("\n");
+  return `${hunk.header}\n${body}`;
 }
