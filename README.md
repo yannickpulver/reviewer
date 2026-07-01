@@ -29,7 +29,15 @@ reviewer 42
   installed and authenticated
 - [`claude`](https://claude.com/claude-code) CLI, logged in
 
-## Install / build
+## Install
+
+### Homebrew
+
+```bash
+brew install yannickpulver/tap/reviewer
+```
+
+### From source
 
 ```bash
 pnpm install
