@@ -3,7 +3,7 @@ import { ChevronRight, MessageSquarePlus, Pencil, Sparkles, Trash2 } from "lucid
 import type { DiffLine, ExistingComment, Hunk } from "@/types";
 import { cn } from "@/lib/utils";
 import { hunkToText, lineKey } from "@/lib/diff";
-import { highlightLine, langForPath } from "@/lib/highlight";
+import { highlightBlock, langForPath } from "@/lib/highlight";
 import { AskBox } from "./AskBox";
 import { CommentEditor } from "./CommentEditor";
 import { Markdown } from "./Markdown";
@@ -90,6 +90,10 @@ function HunkRows({
   existing: ExistingLookup;
 }) {
   const hunkText = hunkToText(hunk);
+  const htmlLines = useMemo(
+    () => highlightBlock(hunk.lines.map((l) => l.content).join("\n"), lang),
+    [hunk, lang],
+  );
   return (
     <>
       <tr className={cn("text-muted-foreground", showSep && "border-t")}>
@@ -102,7 +106,7 @@ function HunkRows({
           key={i}
           path={path}
           line={line}
-          lang={lang}
+          html={htmlLines[i] ?? ""}
           hunkText={hunkText}
           editing={editing}
           toggleEditing={toggleEditing}
@@ -119,7 +123,7 @@ function HunkRows({
 function LineRow({
   path,
   line,
-  lang,
+  html,
   hunkText,
   editing,
   toggleEditing,
@@ -130,7 +134,7 @@ function LineRow({
 }: {
   path: string;
   line: DiffLine;
-  lang: string | null;
+  html: string;
   hunkText: string;
   editing: Set<string>;
   toggleEditing: (key: string, on: boolean) => void;
@@ -147,7 +151,6 @@ function LineRow({
   const priorComments = commentable ? existing(path, line.newLineNo!) : [];
   const isEditing = key ? editing.has(key) : false;
   const isAsking = key ? asking.has(key) : false;
-  const html = useMemo(() => highlightLine(line.content, lang), [line.content, lang]);
 
   const rowBg =
     line.type === "add" ? "diff-add" : line.type === "del" ? "diff-del" : "";
