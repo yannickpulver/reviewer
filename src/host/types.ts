@@ -35,6 +35,8 @@ export interface ExistingComment {
   line: number;
   author: string;
   body: string;
+  /** Whether the review thread this comment belongs to is resolved. */
+  resolved: boolean;
 }
 
 export interface FetchResult {

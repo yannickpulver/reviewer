@@ -89,28 +89,68 @@ export class GitHubHost implements Host {
   }
 
   private async fetchComments(): Promise<ExistingComment[]> {
+    const [owner, repo] = this.ownerRepo.split("/");
+    const query = `
+      query($owner:String!,$repo:String!,$num:Int!){
+        repository(owner:$owner,name:$repo){
+          pullRequest(number:$num){
+            reviewThreads(first:100){
+              nodes{
+                isResolved
+                comments(first:100){
+                  nodes{ path line originalLine author{login} body }
+                }
+              }
+            }
+          }
+        }
+      }`;
     try {
       const res = await this.run("gh", [
-        "api", ...this.hostArgs(), "--paginate",
-        `repos/${this.ownerRepo}/pulls/${this.id}/comments`,
+        "api", ...this.hostArgs(), "graphql",
+        "-f", `query=${query}`,
+        "-F", `owner=${owner}`,
+        "-F", `repo=${repo}`,
+        "-F", `num=${this.id}`,
       ]);
-      const raw = JSON.parse(res.stdout) as Array<{
-        path: string;
-        line: number | null;
-        original_line: number | null;
-        side: string | null;
-        user: { login: string } | null;
-        body: string;
-      }>;
-      return raw
-        .filter((c) => c.side !== "LEFT")
-        .map((c) => ({
-          path: c.path,
-          line: c.line ?? c.original_line ?? 0,
-          author: c.user?.login ?? "unknown",
-          body: c.body,
-        }))
-        .filter((c) => c.line > 0);
+      const parsed = JSON.parse(res.stdout) as {
+        data?: {
+          repository?: {
+            pullRequest?: {
+              reviewThreads?: {
+                nodes: Array<{
+                  isResolved: boolean;
+                  comments: {
+                    nodes: Array<{
+                      path: string;
+                      line: number | null;
+                      originalLine: number | null;
+                      author: { login: string } | null;
+                      body: string;
+                    }>;
+                  };
+                }>;
+              };
+            };
+          };
+        };
+      };
+      const threads = parsed.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+      const out: ExistingComment[] = [];
+      for (const t of threads) {
+        for (const c of t.comments.nodes) {
+          const line = c.line ?? c.originalLine ?? 0;
+          if (line <= 0) continue;
+          out.push({
+            path: c.path,
+            line,
+            author: c.author?.login ?? "unknown",
+            body: c.body,
+            resolved: t.isResolved,
+          });
+        }
+      }
+      return out;
     } catch {
       return []; // comments are best-effort; never block the review
     }

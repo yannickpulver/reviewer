@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { MessageSquarePlus, Pencil, Sparkles, Trash2 } from "lucide-react";
+import { ChevronRight, MessageSquarePlus, Pencil, Sparkles, Trash2 } from "lucide-react";
 import type { DiffLine, ExistingComment, Hunk } from "@/types";
 import { cn } from "@/lib/utils";
 import { hunkToText, lineKey } from "@/lib/diff";
@@ -208,14 +208,10 @@ function LineRow({
         <tr>
           <td colSpan={4} className="px-3 py-2">
             <div className="space-y-2 font-sans text-sm">
-              {priorComments.map((c, i) => (
-                <div key={i} className="rounded-md border border-dashed bg-muted/20 p-3">
-                  <div className="mb-1 text-xs font-medium text-muted-foreground">
-                    {c.author}
-                  </div>
-                  <Markdown>{c.body}</Markdown>
-                </div>
+              {priorComments.filter((c) => !c.resolved).map((c, i) => (
+                <ExistingCommentCard key={i} comment={c} />
               ))}
+              <ResolvedComments comments={priorComments.filter((c) => c.resolved)} />
             </div>
           </td>
         </tr>
@@ -279,5 +275,45 @@ function LineRow({
         </tr>
       )}
     </>
+  );
+}
+
+function ExistingCommentCard({
+  comment,
+  muted,
+}: {
+  comment: ExistingComment;
+  muted?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-md border border-dashed bg-muted/20 p-3",
+        muted && "opacity-70",
+      )}
+    >
+      <div className="mb-1 text-xs font-medium text-muted-foreground">
+        {comment.author}
+      </div>
+      <Markdown>{comment.body}</Markdown>
+    </div>
+  );
+}
+
+function ResolvedComments({ comments }: { comments: ExistingComment[] }) {
+  const [open, setOpen] = useState(false);
+  if (comments.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <button
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+        {comments.length} resolved comment{comments.length === 1 ? "" : "s"}
+      </button>
+      {open &&
+        comments.map((c, i) => <ExistingCommentCard key={i} comment={c} muted />)}
+    </div>
   );
 }

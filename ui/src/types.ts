@@ -75,6 +75,7 @@ export interface ExistingComment {
   line: number;
   author: string;
   body: string;
+  resolved: boolean;
 }
 
 /** A resolved hunk with its owning file path, keyed by "path:Hn". */

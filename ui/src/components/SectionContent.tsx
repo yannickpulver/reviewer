@@ -30,7 +30,7 @@ export function SectionContent({
 
   return (
     <div className="space-y-4">
-      <div className="space-y-2">
+      <div className="sticky top-0 z-10 -mx-6 -mt-6 space-y-2 border-b bg-background px-6 pb-3 pt-6">
         <div className="flex items-center gap-2">
           <Badge variant={section.importance}>{section.importance}</Badge>
           <h2 className="text-xl font-semibold">{section.title}</h2>

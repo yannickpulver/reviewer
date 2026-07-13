@@ -81,6 +81,7 @@ export class GitLabHost implements Host {
           system: boolean;
           body: string;
           author: { username: string } | null;
+          resolved?: boolean;
           position: { new_path: string; new_line: number | null } | null;
         }>;
       }>;
@@ -93,6 +94,7 @@ export class GitLabHost implements Host {
             line: n.position.new_line,
             author: n.author?.username ?? "unknown",
             body: n.body,
+            resolved: n.resolved ?? false,
           });
         }
       }
