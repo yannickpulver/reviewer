@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import type { Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
 import { getReview, submitReview } from "./api";
@@ -23,9 +23,16 @@ export function App() {
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     getReview().then(setPayload).catch((e) => setError(e.message));
   }, []);
+
+  // Scroll back to the top whenever the active section changes.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [active]);
 
   const commentsApi: CommentsApi = useMemo(
     () => ({
@@ -128,12 +135,16 @@ export function App() {
 
   const current = sections[active];
 
-  const toggleReviewed = (i: number) =>
+  const toggleReviewed = (i: number) => {
+    const willReview = !reviewed.has(i);
     setReviewed((prev) => {
       const next = new Set(prev);
-      next.has(i) ? next.delete(i) : next.add(i);
+      willReview ? next.add(i) : next.delete(i);
       return next;
     });
+    // Advance to the next section when marking one reviewed.
+    if (willReview && i + 1 < sections.length) setActive(i + 1);
+  };
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -148,7 +159,7 @@ export function App() {
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
           {current ? (
             <SectionContent
               section={current}

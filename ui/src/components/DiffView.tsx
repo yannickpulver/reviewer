@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { MessageSquarePlus, Pencil, Sparkles, Trash2 } from "lucide-react";
 import type { DiffLine, ExistingComment, Hunk } from "@/types";
 import { cn } from "@/lib/utils";
 import { hunkToText, lineKey } from "@/lib/diff";
+import { highlightLine, langForPath } from "@/lib/highlight";
 import { AskBox } from "./AskBox";
 import { CommentEditor } from "./CommentEditor";
 import { Markdown } from "./Markdown";
@@ -38,6 +39,7 @@ export function DiffView({ path, hunks, comments, existing }: Props) {
 
   const toggleEditing = toggler(setEditing);
   const toggleAsking = toggler(setAsking);
+  const lang = useMemo(() => langForPath(path), [path]);
 
   return (
     <div className="overflow-x-auto rounded-md border bg-card">
@@ -48,6 +50,7 @@ export function DiffView({ path, hunks, comments, existing }: Props) {
               key={hunk.id}
               path={path}
               hunk={hunk}
+              lang={lang}
               showSep={hi > 0}
               editing={editing}
               toggleEditing={toggleEditing}
@@ -66,6 +69,7 @@ export function DiffView({ path, hunks, comments, existing }: Props) {
 function HunkRows({
   path,
   hunk,
+  lang,
   showSep,
   editing,
   toggleEditing,
@@ -76,6 +80,7 @@ function HunkRows({
 }: {
   path: string;
   hunk: Hunk;
+  lang: string | null;
   showSep: boolean;
   editing: Set<string>;
   toggleEditing: (key: string, on: boolean) => void;
@@ -97,6 +102,7 @@ function HunkRows({
           key={i}
           path={path}
           line={line}
+          lang={lang}
           hunkText={hunkText}
           editing={editing}
           toggleEditing={toggleEditing}
@@ -113,6 +119,7 @@ function HunkRows({
 function LineRow({
   path,
   line,
+  lang,
   hunkText,
   editing,
   toggleEditing,
@@ -123,6 +130,7 @@ function LineRow({
 }: {
   path: string;
   line: DiffLine;
+  lang: string | null;
   hunkText: string;
   editing: Set<string>;
   toggleEditing: (key: string, on: boolean) => void;
@@ -131,6 +139,7 @@ function LineRow({
   comments: CommentsApi;
   existing: ExistingLookup;
 }) {
+  const [hovered, setHovered] = useState(false);
   // Comments anchor to the new (right) side; deleted lines aren't commentable.
   const commentable = line.newLineNo !== null;
   const key = commentable ? lineKey(path, line.newLineNo!) : null;
@@ -138,6 +147,7 @@ function LineRow({
   const priorComments = commentable ? existing(path, line.newLineNo!) : [];
   const isEditing = key ? editing.has(key) : false;
   const isAsking = key ? asking.has(key) : false;
+  const html = useMemo(() => highlightLine(line.content, lang), [line.content, lang]);
 
   const rowBg =
     line.type === "add" ? "diff-add" : line.type === "del" ? "diff-del" : "";
@@ -147,7 +157,11 @@ function LineRow({
 
   return (
     <>
-      <tr className={cn("group", rowBg)}>
+      <tr
+        className={rowBg}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
         <td className={cn("w-12 select-none px-2 text-right text-muted-foreground", gutterBg)}>
           {line.oldLineNo ?? ""}
         </td>
@@ -155,13 +169,16 @@ function LineRow({
           {line.newLineNo ?? ""}
         </td>
         <td className="w-10 select-none px-1 text-center text-muted-foreground">
-          {commentable && key && (
-            <div className="flex items-center justify-center gap-1 opacity-0 transition group-hover:opacity-100">
+          {commentable && key && hovered && (
+            <div className="flex items-center justify-center gap-1">
               {!isEditing && (
                 <button
                   aria-label="Add comment"
                   className="hover:text-foreground"
-                  onClick={() => toggleEditing(key, true)}
+                  onClick={() => {
+                    setHovered(false);
+                    toggleEditing(key, true);
+                  }}
                 >
                   <MessageSquarePlus className="size-3.5" />
                 </button>
@@ -170,7 +187,10 @@ function LineRow({
                 <button
                   aria-label="Ask Claude"
                   className="hover:text-foreground"
-                  onClick={() => toggleAsking(key, true)}
+                  onClick={() => {
+                    setHovered(false);
+                    toggleAsking(key, true);
+                  }}
                 >
                   <Sparkles className="size-3.5" />
                 </button>
@@ -180,7 +200,7 @@ function LineRow({
         </td>
         <td className="whitespace-pre-wrap px-2 py-0.5">
           <span className="select-none text-muted-foreground">{sign}</span>
-          {line.content}
+          <span dangerouslySetInnerHTML={{ __html: html }} />
         </td>
       </tr>
 
