@@ -6,9 +6,11 @@ import { groupDiff } from "./group/index.js";
 import {
   hostForId,
   listOpenPulls,
+  makeLocalHost,
   pullRank,
   resolveHost,
   type Host,
+  type HostKind,
   type PullSummary,
 } from "./host/index.js";
 import { startServer } from "./server/index.js";
@@ -18,6 +20,8 @@ interface Args {
   port: number;
   noOpen: boolean;
   model?: string;
+  local: boolean;
+  base?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -25,9 +29,13 @@ function parseArgs(argv: string[]): Args {
   let port = 0;
   let noOpen = false;
   let model: string | undefined;
+  let local = false;
+  let base: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--no-open") noOpen = true;
+    else if (a === "--local") local = true;
+    else if (a === "--base") base = argv[++i];
     else if (a === "--port") port = Number(argv[++i]);
     else if (a === "--model") model = argv[++i];
     else if (a === "-h" || a === "--help") {
@@ -35,28 +43,37 @@ function parseArgs(argv: string[]): Args {
       process.exit(0);
     } else if (!a.startsWith("-")) input = a;
   }
-  return { input, port, noOpen, model };
+  return { input, port, noOpen, model, local, base };
 }
 
-/** With no argument: list open PRs/MRs and let the user pick one. */
-async function pickOpenPull(): Promise<Host> {
+/**
+ * With no argument: list open PRs/MRs and let the user pick one, plus a final
+ * "review the current local branch" option for pre-PR work. Falls back to a
+ * local review when there's no remote or no open PRs/MRs.
+ */
+async function pickOpenPull(base?: string): Promise<Host> {
   console.error("→ Listing open PRs/MRs…");
-  const { host, repo, pulls } = await listOpenPulls();
-  if (pulls.length === 0) throw new Error("No open PRs/MRs found for this repo.");
-  if (pulls.length === 1) {
-    const only = pulls[0]!;
-    console.error(`  Only one open: #${only.id} "${only.title}" — opening it.`);
-    return hostForId(host, only.id, repo);
+  let listing: Awaited<ReturnType<typeof listOpenPulls>>;
+  try {
+    listing = await listOpenPulls();
+  } catch (e) {
+    console.error(`  (${(e as Error).message}) — reviewing the current local branch.`);
+    return makeLocalHost(base);
+  }
+  const { host, repo, pulls } = listing;
+  if (pulls.length === 0) {
+    console.error("  No open PRs/MRs — reviewing the current local branch.");
+    return makeLocalHost(base);
   }
   printPullList(pulls);
-  const id = await promptChoice(pulls);
-  return hostForId(host, id, repo);
+  return promptChoice(pulls, host, repo, base);
 }
 
 const BUCKET_LABELS = ["Review requested from you", "Assigned to you", "Other open"];
 
 function printPullList(pulls: PullSummary[]) {
-  const width = String(pulls.length).length;
+  const localChoice = pulls.length + 1;
+  const width = String(localChoice).length;
   // Only show section headers when more than one bucket is present.
   const multiBucket = new Set(pulls.map(pullRank)).size > 1;
   console.error("\nOpen PRs/MRs:");
@@ -71,15 +88,27 @@ function printPullList(pulls: PullSummary[]) {
     const draft = p.state === "draft" ? " (draft)" : "";
     console.error(`  ${n}. #${p.id}  ${p.title}${draft}  — ${p.author}`);
   }
+  console.error(
+    `\n  ${String(localChoice).padStart(width)}. Review the current local branch (no PR/MR)`,
+  );
   console.error("");
 }
 
-async function promptChoice(pulls: PullSummary[]): Promise<number> {
+async function promptChoice(
+  pulls: PullSummary[],
+  host: HostKind,
+  repo: string,
+  base?: string,
+): Promise<Host> {
+  const localChoice = pulls.length + 1;
   for (;;) {
-    const ans = (await promptLine(`Pick a PR/MR [1-${pulls.length}]: `)).trim();
+    const ans = (await promptLine(`Pick [1-${localChoice}]: `)).trim();
     const n = Number(ans);
-    if (Number.isInteger(n) && n >= 1 && n <= pulls.length) return pulls[n - 1]!.id;
-    console.error(`  Enter a number between 1 and ${pulls.length}.`);
+    if (n === localChoice) return makeLocalHost(base);
+    if (Number.isInteger(n) && n >= 1 && n <= pulls.length) {
+      return hostForId(host, pulls[n - 1]!.id, repo);
+    }
+    console.error(`  Enter a number between 1 and ${localChoice}.`);
   }
 }
 
@@ -97,11 +126,14 @@ function printHelp() {
   console.log(`reviewer — grouped PR/MR review with Claude Code
 
 Usage:
-  reviewer                            (pick from open PRs/MRs in the repo)
+  reviewer                            (pick from open PRs/MRs, or the local branch)
   reviewer <pr-or-mr-number>          (run inside the repo)
   reviewer <github-or-gitlab-url>
+  reviewer --local                    (review the current branch, no PR needed)
 
 Options:
+  --local        review the current branch's changes (commits + uncommitted)
+  --base <ref>   base to diff against for --local (default: origin/HEAD, else main/master)
   --port <n>     bind to a specific port (default: free ephemeral port)
   --model <name> Claude model for grouping (e.g. sonnet, opus; default: CLI default)
   --no-open      don't open the browser automatically
@@ -111,15 +143,18 @@ Options:
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  const host = args.input
-    ? (console.error("→ Resolving PR/MR…"), await resolveHost(args.input))
-    : await pickOpenPull();
+  const host = args.local
+    ? (console.error("→ Reviewing local branch…"), await makeLocalHost(args.base))
+    : args.input
+      ? (console.error("→ Resolving PR/MR…"), await resolveHost(args.input))
+      : await pickOpenPull(args.base);
 
   console.error("→ Fetching diff…");
   const { meta, diffText, comments: existingComments } = await host.fetch();
   const diff = parseUnifiedDiff(diffText);
   const fileCount = diff.files.length;
-  console.error(`  ${meta.host} #${meta.id}: "${meta.title}" — ${fileCount} file(s)`);
+  const label = meta.host === "local" ? `local ${meta.headRef}` : `${meta.host} #${meta.id}`;
+  console.error(`  ${label}: "${meta.title}" — ${fileCount} file(s)`);
 
   console.error("→ Grouping with Claude…");
   const grouping = await groupDiff(diff, diffText, { model: args.model });

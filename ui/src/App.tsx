@@ -176,11 +176,15 @@ export function App() {
           )}
         </div>
 
-        <SubmitBar
-          count={commentList.length}
-          onSubmit={() => setConfirming(true)}
-          submitted={submitted}
-        />
+        {payload.meta.host === "local" ? (
+          <LocalBar count={commentList.length} />
+        ) : (
+          <SubmitBar
+            count={commentList.length}
+            onSubmit={() => setConfirming(true)}
+            submitted={submitted}
+          />
+        )}
       </main>
 
       {confirming && (
@@ -233,6 +237,15 @@ function SubmitBar({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function LocalBar({ count }: { count: number }) {
+  return (
+    <div className="border-t bg-background/95 px-6 py-3 text-sm text-muted-foreground backdrop-blur">
+      Local branch review — read-only
+      {count > 0 && `, ${count} note${count === 1 ? "" : "s"} (not submittable)`}
     </div>
   );
 }

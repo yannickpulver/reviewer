@@ -1,4 +1,4 @@
-export type HostKind = "github" | "gitlab";
+export type HostKind = "github" | "gitlab" | "local";
 
 /** Normalized PR/MR lifecycle state. */
 export type PullState = "open" | "draft" | "merged" | "closed";

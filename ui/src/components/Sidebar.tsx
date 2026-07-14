@@ -34,13 +34,17 @@ export function Sidebar({
       <div className="space-y-1 border-b px-4 py-4">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <GitPullRequest className="size-3.5" />
-          <a href={meta.url} target="_blank" rel="noreferrer" className="hover:underline">
-            {meta.host} #{meta.id}
-          </a>
+          {meta.host === "local" ? (
+            <span>local</span>
+          ) : (
+            <a href={meta.url} target="_blank" rel="noreferrer" className="hover:underline">
+              {meta.host} #{meta.id}
+            </a>
+          )}
           <span>·</span>
           <span>{meta.author}</span>
           <Badge className={cn("ml-auto capitalize", STATE_STYLES[meta.state])}>
-            {meta.state}
+            {meta.host === "local" ? "branch" : meta.state}
           </Badge>
         </div>
         <h1 className="text-sm font-semibold leading-snug">{meta.title}</h1>
