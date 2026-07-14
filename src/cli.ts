@@ -6,6 +6,7 @@ import { groupDiff } from "./group/index.js";
 import {
   hostForId,
   listOpenPulls,
+  pullRank,
   resolveHost,
   type Host,
   type PullSummary,
@@ -52,13 +53,20 @@ async function pickOpenPull(): Promise<Host> {
   return hostForId(host, id, repo);
 }
 
+const BUCKET_LABELS = ["Review requested from you", "Assigned to you", "Other open"];
+
 function printPullList(pulls: PullSummary[]) {
   const width = String(pulls.length).length;
-  const reviewCount = pulls.filter((p) => p.reviewRequestedFromMe).length;
+  // Only show section headers when more than one bucket is present.
+  const multiBucket = new Set(pulls.map(pullRank)).size > 1;
   console.error("\nOpen PRs/MRs:");
+  let prevRank = -1;
   for (const [i, p] of pulls.entries()) {
-    // Divider between PRs/MRs awaiting my review and the rest.
-    if (reviewCount > 0 && i === reviewCount) console.error("  ──────");
+    const rank = pullRank(p);
+    if (multiBucket && rank !== prevRank) {
+      console.error(`\n  ${BUCKET_LABELS[rank]}:`);
+      prevRank = rank;
+    }
     const n = String(i + 1).padStart(width);
     const draft = p.state === "draft" ? " (draft)" : "";
     console.error(`  ${n}. #${p.id}  ${p.title}${draft}  — ${p.author}`);

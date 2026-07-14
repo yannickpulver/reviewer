@@ -74,6 +74,7 @@ export function App() {
         importance: "low",
         summary: "Changes not assigned to a group.",
         hunks: payload.grouping.ungrouped,
+        flags: [],
       });
     }
     return list;
@@ -159,7 +160,7 @@ export function App() {
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-6">
           {current ? (
             <SectionContent
               section={current}

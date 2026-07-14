@@ -14,6 +14,8 @@ export interface PullSummary {
   state: PullState;
   /** Whether the current user is a requested reviewer of this PR/MR. */
   reviewRequestedFromMe: boolean;
+  /** Whether the current user is an assignee of this PR/MR. */
+  assignedToMe: boolean;
 }
 
 /** Resolve a Host implementation from a CLI argument (PR/MR number or URL). */
@@ -91,9 +93,16 @@ export async function listOpenPulls(
     host === "github"
       ? await listGitHubPulls(repo, run)
       : await listGitLabPulls(repo, run);
-  // Stable sort: PRs/MRs where the current user is a requested reviewer float up.
-  pulls.sort((a, b) => Number(b.reviewRequestedFromMe) - Number(a.reviewRequestedFromMe));
+  // Stable sort into buckets: review-requested-from-me, then assigned-to-me, then the rest.
+  pulls.sort((a, b) => pullRank(a) - pullRank(b));
   return { host, repo, pulls };
+}
+
+/** Bucket rank for the picker: lower sorts first. */
+export function pullRank(p: PullSummary): number {
+  if (p.reviewRequestedFromMe) return 0;
+  if (p.assignedToMe) return 1;
+  return 2;
 }
 
 async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]> {
@@ -105,7 +114,7 @@ async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]
   const [res, me] = await Promise.all([
     run("gh", [
       "pr", "list", "--repo", repo, "--state", "open",
-      "--json", "number,title,author,isDraft,reviewRequests",
+      "--json", "number,title,author,isDraft,reviewRequests,assignees",
     ]),
     currentLogin("gh", userArgs, run),
   ]);
@@ -115,6 +124,7 @@ async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]
     author: { login: string } | null;
     isDraft: boolean;
     reviewRequests: Array<{ login?: string }> | null;
+    assignees: Array<{ login?: string }> | null;
   }>;
   return raw.map((p) => ({
     id: p.number,
@@ -122,6 +132,7 @@ async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]
     author: p.author?.login ?? "unknown",
     state: p.isDraft ? "draft" : "open",
     reviewRequestedFromMe: !!me && (p.reviewRequests ?? []).some((r) => r.login === me),
+    assignedToMe: !!me && (p.assignees ?? []).some((a) => a.login === me),
   }));
 }
 
@@ -138,6 +149,7 @@ async function listGitLabPulls(repo: string, run: Runner): Promise<PullSummary[]
     title: string;
     author: { username: string } | null;
     reviewers?: Array<{ username: string }> | null;
+    assignees?: Array<{ username: string }> | null;
     draft?: boolean;
     work_in_progress?: boolean;
   }>;
@@ -147,6 +159,7 @@ async function listGitLabPulls(repo: string, run: Runner): Promise<PullSummary[]
     author: m.author?.username ?? "unknown",
     state: m.draft || m.work_in_progress ? "draft" : "open",
     reviewRequestedFromMe: !!me && (m.reviewers ?? []).some((r) => r.username === me),
+    assignedToMe: !!me && (m.assignees ?? []).some((a) => a.username === me),
   }));
 }
 

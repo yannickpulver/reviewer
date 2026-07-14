@@ -1,8 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { detectHostFromRemote } from "./index.js";
+import { detectHostFromRemote, pullRank, type PullSummary } from "./index.js";
 import type { Runner } from "../util/exec.js";
 
 const noRun: Runner = async () => ({ stdout: "", stderr: "" });
+
+describe("pullRank", () => {
+  const base: PullSummary = {
+    id: 1,
+    title: "t",
+    author: "a",
+    state: "open",
+    reviewRequestedFromMe: false,
+    assignedToMe: false,
+  };
+  it("orders review-requested before assigned before other", () => {
+    expect(pullRank({ ...base, reviewRequestedFromMe: true, assignedToMe: true })).toBe(0);
+    expect(pullRank({ ...base, assignedToMe: true })).toBe(1);
+    expect(pullRank(base)).toBe(2);
+  });
+});
 
 describe("detectHostFromRemote", () => {
   it("detects github.com (ssh + https)", async () => {

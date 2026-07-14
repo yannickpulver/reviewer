@@ -29,11 +29,20 @@ export interface DiffFile {
   hunks: Hunk[];
 }
 
+export type FlagSeverity = "warning" | "danger";
+
+export interface Flag {
+  hunk: string;
+  severity: FlagSeverity;
+  note: string;
+}
+
 export interface Group {
   title: string;
   importance: Importance;
   summary: string;
   hunks: string[];
+  flags: Flag[];
 }
 
 export interface Grouping {
