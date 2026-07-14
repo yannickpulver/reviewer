@@ -53,7 +53,7 @@ export interface Grouping {
 export type PullState = "open" | "draft" | "merged" | "closed";
 
 export interface PullMeta {
-  host: "github" | "gitlab";
+  host: "github" | "gitlab" | "local";
   id: number;
   title: string;
   author: string;

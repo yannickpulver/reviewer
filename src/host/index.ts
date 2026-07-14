@@ -2,6 +2,7 @@ import { runCommand, type Runner } from "../util/exec.js";
 import { parseInput } from "./detect.js";
 import { GitHubHost, githubRepoFromCwd } from "./github.js";
 import { GitLabHost, projectPathFromRemote } from "./gitlab.js";
+import { LocalHost, defaultBase } from "./local.js";
 import type { Host, HostKind, PullState, Target } from "./types.js";
 
 export type { Host, HostKind, PullMeta, ReviewComment, FetchResult } from "./types.js";
@@ -82,6 +83,14 @@ export function hostForId(
   return kind === "github"
     ? new GitHubHost(id, repo, run)
     : new GitLabHost(id, repo, run);
+}
+
+/** Build a Host for the current local branch, resolving the base if not given. */
+export async function makeLocalHost(
+  base: string | undefined,
+  run: Runner = runCommand,
+): Promise<Host> {
+  return new LocalHost(base ?? (await defaultBase(run)), run);
 }
 
 /** List open PRs/MRs for the repo of the current directory (no argument given). */
