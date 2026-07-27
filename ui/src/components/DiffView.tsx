@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
-import { ChevronRight, MessageSquarePlus, Pencil, Sparkles, Trash2 } from "lucide-react";
-import type { DiffLine, ExistingComment, Hunk } from "@/types";
+import { ChevronRight, MessageSquarePlus, Pencil, Sparkles, Trash2, X } from "lucide-react";
+import type { ArchitectFinding, ArchitectSeverity, DiffLine, ExistingComment, Hunk } from "@/types";
 import { cn } from "@/lib/utils";
 import { hunkToText, lineKey } from "@/lib/diff";
 import { highlightBlock, langForPath } from "@/lib/highlight";
+import { Button } from "@/components/ui/button";
 import { AskBox } from "./AskBox";
 import { CommentEditor } from "./CommentEditor";
 import { Markdown } from "./Markdown";
@@ -17,11 +18,25 @@ export interface CommentsApi {
 /** Read-only existing comments looked up by new-side line. */
 export type ExistingLookup = (path: string, line: number) => ExistingComment[];
 
+/** An architect finding tagged with a stable id (its index in the review). */
+export interface ArchitectFindingView extends ArchitectFinding {
+  id: number;
+}
+
+export interface ArchitectApi {
+  get: (path: string, line: number) => ArchitectFindingView[];
+  /** Turn a finding into a draft comment at its path/line, then hide the card. */
+  adopt: (finding: ArchitectFindingView) => void;
+  /** Hide the card without adopting it. */
+  dismiss: (finding: ArchitectFindingView) => void;
+}
+
 interface Props {
   path: string;
   hunks: Hunk[];
   comments: CommentsApi;
   existing: ExistingLookup;
+  architect: ArchitectApi;
 }
 
 function toggler(setter: React.Dispatch<React.SetStateAction<Set<string>>>) {
@@ -33,7 +48,7 @@ function toggler(setter: React.Dispatch<React.SetStateAction<Set<string>>>) {
     });
 }
 
-export function DiffView({ path, hunks, comments, existing }: Props) {
+export function DiffView({ path, hunks, comments, existing, architect }: Props) {
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [asking, setAsking] = useState<Set<string>>(new Set());
 
@@ -58,6 +73,7 @@ export function DiffView({ path, hunks, comments, existing }: Props) {
               toggleAsking={toggleAsking}
               comments={comments}
               existing={existing}
+              architect={architect}
             />
           ))}
         </tbody>
@@ -77,6 +93,7 @@ function HunkRows({
   toggleAsking,
   comments,
   existing,
+  architect,
 }: {
   path: string;
   hunk: Hunk;
@@ -88,6 +105,7 @@ function HunkRows({
   toggleAsking: (key: string, on: boolean) => void;
   comments: CommentsApi;
   existing: ExistingLookup;
+  architect: ArchitectApi;
 }) {
   const hunkText = hunkToText(hunk);
   const htmlLines = useMemo(
@@ -114,6 +132,7 @@ function HunkRows({
           toggleAsking={toggleAsking}
           comments={comments}
           existing={existing}
+          architect={architect}
         />
       ))}
     </>
@@ -131,6 +150,7 @@ function LineRow({
   toggleAsking,
   comments,
   existing,
+  architect,
 }: {
   path: string;
   line: DiffLine;
@@ -142,6 +162,7 @@ function LineRow({
   toggleAsking: (key: string, on: boolean) => void;
   comments: CommentsApi;
   existing: ExistingLookup;
+  architect: ArchitectApi;
 }) {
   const [hovered, setHovered] = useState(false);
   // Comments anchor to the new (right) side; deleted lines aren't commentable.
@@ -149,6 +170,7 @@ function LineRow({
   const key = commentable ? lineKey(path, line.newLineNo!) : null;
   const draft = key ? comments.get(path, line.newLineNo!) : undefined;
   const priorComments = commentable ? existing(path, line.newLineNo!) : [];
+  const findings = commentable ? architect.get(path, line.newLineNo!) : [];
   const isEditing = key ? editing.has(key) : false;
   const isAsking = key ? asking.has(key) : false;
 
@@ -220,6 +242,23 @@ function LineRow({
         </tr>
       )}
 
+      {findings.length > 0 && (
+        <tr>
+          <td colSpan={4} className="px-3 py-2">
+            <div className="space-y-2 font-sans text-sm">
+              {findings.map((f) => (
+                <ArchitectFindingCard
+                  key={f.id}
+                  finding={f}
+                  onAdopt={() => architect.adopt(f)}
+                  onDismiss={() => architect.dismiss(f)}
+                />
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+
       {draft && key && !isEditing && (
         <tr>
           <td colSpan={4} className="px-3 py-2">
@@ -278,6 +317,64 @@ function LineRow({
         </tr>
       )}
     </>
+  );
+}
+
+const SEVERITY_STYLES: Record<ArchitectSeverity, string> = {
+  important: "border-red-500/30 bg-red-500/10",
+  design: "border-purple-500/30 bg-purple-500/10",
+  nit: "border-zinc-500/30 bg-zinc-500/10",
+  "pre-existing": "border-amber-500/30 bg-amber-500/10",
+};
+
+const SEVERITY_LABELS: Record<ArchitectSeverity, string> = {
+  important: "Important",
+  design: "Design",
+  nit: "Nit",
+  "pre-existing": "Pre-existing",
+};
+
+export function ArchitectFindingCard({
+  finding,
+  onAdopt,
+  onDismiss,
+}: {
+  finding: ArchitectFinding;
+  onAdopt: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className={cn("space-y-2 rounded-md border p-3", SEVERITY_STYLES[finding.severity])}>
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 shrink-0 rounded border border-foreground/10 bg-background/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+          {SEVERITY_LABELS[finding.severity]}
+        </span>
+        <div className="flex-1 space-y-1">
+          <p>{finding.comment}</p>
+          {finding.fix && (
+            <p className="text-muted-foreground">
+              <span className="font-medium">Fix: </span>
+              {finding.fix}
+            </p>
+          )}
+        </div>
+        <button
+          aria-label="Dismiss finding"
+          className="text-muted-foreground hover:text-foreground"
+          onClick={onDismiss}
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" onClick={onAdopt}>
+          <Sparkles className="size-3.5" /> Add to review
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onDismiss}>
+          Dismiss
+        </Button>
+      </div>
+    </div>
   );
 }
 

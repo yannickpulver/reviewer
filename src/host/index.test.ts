@@ -12,6 +12,7 @@ describe("pullRank", () => {
     state: "open",
     reviewRequestedFromMe: false,
     assignedToMe: false,
+    createdAt: "2024-01-01T00:00:00Z",
   };
   it("orders review-requested before assigned before other", () => {
     expect(pullRank({ ...base, reviewRequestedFromMe: true, assignedToMe: true })).toBe(0);

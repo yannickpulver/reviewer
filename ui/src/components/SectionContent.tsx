@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { blocksForRefs } from "@/lib/diff";
 import { fileUrl } from "@/lib/links";
 import { cn } from "@/lib/utils";
-import { DiffView, type CommentsApi, type ExistingLookup } from "./DiffView";
+import { DiffView, type ArchitectApi, type CommentsApi, type ExistingLookup } from "./DiffView";
 
 interface Props {
   section: Group;
@@ -13,6 +13,7 @@ interface Props {
   index: Map<string, ResolvedHunk>;
   comments: CommentsApi;
   existing: ExistingLookup;
+  architect: ArchitectApi;
   reviewed: boolean;
   onToggleReviewed: () => void;
 }
@@ -23,6 +24,7 @@ export function SectionContent({
   index,
   comments,
   existing,
+  architect,
   reviewed,
   onToggleReviewed,
 }: Props) {
@@ -69,7 +71,13 @@ export function SectionContent({
             ) : (
               <div className="font-mono text-xs text-muted-foreground">{block.path}</div>
             )}
-            <DiffView path={block.path} hunks={block.hunks} comments={comments} existing={existing} />
+            <DiffView
+              path={block.path}
+              hunks={block.hunks}
+              comments={comments}
+              existing={existing}
+              architect={architect}
+            />
           </div>
         );
       })}

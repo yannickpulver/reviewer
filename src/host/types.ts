@@ -39,22 +39,28 @@ export interface ExistingComment {
   resolved: boolean;
 }
 
+/** Whether the fetched diff covers the whole PR/MR or just the changes since the reviewer's last review. */
+export type DiffScope = "full" | "since-last-review";
+
 export interface FetchResult {
   meta: PullMeta;
   /** Raw unified diff text */
   diffText: string;
   /** Inline comments already left by reviewers */
   comments: ExistingComment[];
+  diffScope: DiffScope;
 }
 
 export interface Host {
   kind: HostKind;
-  fetch(): Promise<FetchResult>;
+  fetch(opts?: { sinceLastReview?: boolean }): Promise<FetchResult>;
   postReview(
     comments: ReviewComment[],
     summary: string,
     action: ReviewAction,
   ): Promise<{ url: string }>;
+  /** The current user's most recent submitted review (GitHub only), or null/undefined if unsupported/none. */
+  getLastReview?(): Promise<{ sha: string; submittedAt: string } | null>;
 }
 
 /** Where the PR/MR lives, resolved from a URL or the local repo remote. */

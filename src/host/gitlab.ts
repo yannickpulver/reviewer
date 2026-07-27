@@ -52,7 +52,7 @@ export class GitLabHost implements Host {
     return JSON.parse(res.stdout) as GlabMr;
   }
 
-  async fetch(): Promise<FetchResult> {
+  async fetch(_opts?: { sinceLastReview?: boolean }): Promise<FetchResult> {
     const mr = await this.fetchMr();
     const diff = await this.run("glab", ["mr", "diff", String(this.id), "-R", this.repo]);
 
@@ -67,7 +67,7 @@ export class GitLabHost implements Host {
       headSha: mr.diff_refs?.head_sha ?? mr.sha,
       state: glState(mr),
     };
-    return { meta, diffText: diff.stdout, comments: await this.fetchComments() };
+    return { meta, diffText: diff.stdout, comments: await this.fetchComments(), diffScope: "full" };
   }
 
   private async fetchComments(): Promise<ExistingComment[]> {

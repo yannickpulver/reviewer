@@ -1,4 +1,5 @@
 import type { Runner } from "../util/exec.js";
+import { currentLogin } from "./index.js";
 import type {
   ExistingComment,
   FetchResult,
@@ -64,15 +65,13 @@ export class GitHubHost implements Host {
     return this.apiHost ? ["--hostname", this.apiHost] : [];
   }
 
-  async fetch(): Promise<FetchResult> {
+  async fetch(opts?: { sinceLastReview?: boolean }): Promise<FetchResult> {
     const view = await this.run("gh", [
       "pr", "view", String(this.id),
       "--repo", this.repo,
       "--json", "number,title,author,url,baseRefName,headRefName,headRefOid,state,isDraft",
     ]);
     const v = JSON.parse(view.stdout) as GhView;
-
-    const diff = await this.run("gh", ["pr", "diff", String(this.id), "--repo", this.repo]);
 
     const meta: PullMeta = {
       host: "github",
@@ -85,7 +84,62 @@ export class GitHubHost implements Host {
       headSha: v.headRefOid,
       state: ghState(v),
     };
-    return { meta, diffText: diff.stdout, comments: await this.fetchComments() };
+
+    let diffText: string | undefined;
+    let diffScope: FetchResult["diffScope"] = "full";
+    if (opts?.sinceLastReview) {
+      const last = await this.getLastReview();
+      if (last) {
+        try {
+          const compare = await this.run("gh", [
+            "api", ...this.hostArgs(),
+            "-H", "Accept: application/vnd.github.v3.diff",
+            `repos/${this.ownerRepo}/compare/${last.sha}...${meta.headSha}`,
+          ]);
+          diffText = compare.stdout;
+          diffScope = "since-last-review";
+        } catch (e) {
+          console.error(
+            `  (could not fetch the diff since your last review: ${(e as Error).message}) — falling back to the full diff.`,
+          );
+        }
+      } else {
+        console.error("  (no previous review found) — showing the full diff.");
+      }
+    }
+    if (diffText === undefined) {
+      diffText = (await this.run("gh", ["pr", "diff", String(this.id), "--repo", this.repo])).stdout;
+    }
+
+    return { meta, diffText, comments: await this.fetchComments(), diffScope };
+  }
+
+  /** The current user's latest submitted (non-pending) review, or null if none/unavailable. */
+  async getLastReview(): Promise<{ sha: string; submittedAt: string } | null> {
+    const me = await currentLogin("gh", ["api", "user", "--jq", ".login", ...this.hostArgs()], this.run);
+    if (!me) return null;
+    try {
+      const res = await this.run("gh", [
+        "api", ...this.hostArgs(), "--paginate",
+        `repos/${this.ownerRepo}/pulls/${this.id}/reviews`,
+      ]);
+      const reviews = JSON.parse(res.stdout) as Array<{
+        user: { login: string } | null;
+        state: string;
+        commit_id: string;
+        submitted_at: string | null;
+      }>;
+      const mine = reviews.filter(
+        (r) => r.user?.login === me && r.state !== "PENDING" && r.submitted_at,
+      );
+      if (!mine.length) return null;
+      mine.sort(
+        (a, b) => new Date(b.submitted_at!).getTime() - new Date(a.submitted_at!).getTime(),
+      );
+      return { sha: mine[0]!.commit_id, submittedAt: mine[0]!.submitted_at! };
+    } catch {
+      return null;
+    }
   }
 
   private async fetchComments(): Promise<ExistingComment[]> {

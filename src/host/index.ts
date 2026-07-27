@@ -17,6 +17,8 @@ export interface PullSummary {
   reviewRequestedFromMe: boolean;
   /** Whether the current user is an assignee of this PR/MR. */
   assignedToMe: boolean;
+  /** ISO creation timestamp. */
+  createdAt: string;
 }
 
 /** Resolve a Host implementation from a CLI argument (PR/MR number or URL). */
@@ -123,7 +125,7 @@ async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]
   const [res, me] = await Promise.all([
     run("gh", [
       "pr", "list", "--repo", repo, "--state", "open",
-      "--json", "number,title,author,isDraft,reviewRequests,assignees",
+      "--json", "number,title,author,isDraft,reviewRequests,assignees,createdAt",
     ]),
     currentLogin("gh", userArgs, run),
   ]);
@@ -134,6 +136,7 @@ async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]
     isDraft: boolean;
     reviewRequests: Array<{ login?: string }> | null;
     assignees: Array<{ login?: string }> | null;
+    createdAt: string;
   }>;
   return raw.map((p) => ({
     id: p.number,
@@ -142,6 +145,7 @@ async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]
     state: p.isDraft ? "draft" : "open",
     reviewRequestedFromMe: !!me && (p.reviewRequests ?? []).some((r) => r.login === me),
     assignedToMe: !!me && (p.assignees ?? []).some((a) => a.login === me),
+    createdAt: p.createdAt,
   }));
 }
 
@@ -161,6 +165,7 @@ async function listGitLabPulls(repo: string, run: Runner): Promise<PullSummary[]
     assignees?: Array<{ username: string }> | null;
     draft?: boolean;
     work_in_progress?: boolean;
+    created_at: string;
   }>;
   return raw.map((m) => ({
     id: m.iid,
@@ -169,11 +174,12 @@ async function listGitLabPulls(repo: string, run: Runner): Promise<PullSummary[]
     state: m.draft || m.work_in_progress ? "draft" : "open",
     reviewRequestedFromMe: !!me && (m.reviewers ?? []).some((r) => r.username === me),
     assignedToMe: !!me && (m.assignees ?? []).some((a) => a.username === me),
+    createdAt: m.created_at,
   }));
 }
 
 /** Resolve the authenticated user's login; returns "" if unavailable. */
-async function currentLogin(
+export async function currentLogin(
   cli: "gh" | "glab",
   args: string[],
   run: Runner,
