@@ -64,11 +64,14 @@ export interface PullMeta {
   state: PullState;
 }
 
+export type DiffScope = "full" | "since-last-review";
+
 export interface ReviewPayload {
   meta: PullMeta;
   files: DiffFile[];
   grouping: Grouping;
   existingComments: ExistingComment[];
+  diffScope: DiffScope;
 }
 
 export interface ReviewComment {
@@ -92,4 +95,23 @@ export interface ResolvedHunk {
   ref: string;
   path: string;
   hunk: Hunk;
+}
+
+export type ArchitectSeverity = "important" | "design" | "nit" | "pre-existing";
+
+export interface ArchitectFinding {
+  path: string;
+  /** New-file line number */
+  line: number;
+  severity: ArchitectSeverity;
+  comment: string;
+  fix?: string;
+  /** Whether path+line was validated against the parsed diff server-side */
+  anchored: boolean;
+}
+
+export interface ArchitectReview {
+  verdict: "clean" | "issues";
+  summary: string;
+  findings: ArchitectFinding[];
 }

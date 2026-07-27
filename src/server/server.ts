@@ -3,6 +3,7 @@ import { join, normalize } from "node:path";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import type { Host } from "../host/types.js";
+import { architectReview, type ArchitectReview } from "../review/architect.js";
 import { askClaude, type AskInput } from "./ask.js";
 import { findUiDist } from "./paths.js";
 import type { ReviewPayload, SubmitBody } from "./payload.js";
@@ -22,6 +23,13 @@ export interface RunningServer {
   close: () => Promise<void>;
 }
 
+export interface ReviewOptions {
+  /** Raw unified diff text, needed for the independent architect review. */
+  diffText: string;
+  /** Claude model to use for the architect review; omit to use the CLI default. */
+  model?: string;
+}
+
 /**
  * Start the local review server on a free ephemeral port (or `preferredPort`),
  * bound to 127.0.0.1. Serves the built UI and the review API.
@@ -30,9 +38,14 @@ export function startServer(
   payload: ReviewPayload,
   host: Host,
   preferredPort = 0,
+  reviewOptions: ReviewOptions = { diffText: "" },
 ): Promise<RunningServer> {
   const uiDist = findUiDist();
   const app = new Hono();
+
+  // Cache the architect review in memory (a promise, so concurrent clicks dedupe);
+  // `?force=1` clears it and reruns.
+  let architectPromise: Promise<ArchitectReview> | null = null;
 
   app.get("/api/review", (c) => c.json(payload));
 
@@ -63,6 +76,26 @@ export function startServer(
         question: body.question,
       });
       return c.json({ answer });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
+
+  app.post("/api/architect-review", async (c) => {
+    const force = c.req.query("force") === "1";
+    if (force || !architectPromise) {
+      architectPromise = architectReview(
+        reviewOptions.diffText,
+        payload.files,
+        reviewOptions.model,
+      ).catch((err) => {
+        architectPromise = null; // don't cache failures — let the next click retry
+        throw err;
+      });
+    }
+    try {
+      const result = await architectPromise;
+      return c.json(result);
     } catch (err) {
       return c.json({ error: (err as Error).message }, 502);
     }

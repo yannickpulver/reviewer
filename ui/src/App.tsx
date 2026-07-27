@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import type { Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
-import { getReview, submitReview } from "./api";
+import { getReview, runArchitectReview, submitReview } from "./api";
 import { indexHunks, lineKey } from "./lib/diff";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, type ArchitectState } from "./components/Sidebar";
 import { SectionContent } from "./components/SectionContent";
-import type { CommentsApi, ExistingLookup } from "./components/DiffView";
+import type { ArchitectApi, ArchitectFindingView, CommentsApi, ExistingLookup } from "./components/DiffView";
 
 export function App() {
   const [payload, setPayload] = useState<ReviewPayload | null>(null);
@@ -22,6 +22,10 @@ export function App() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const [architect, setArchitect] = useState<ArchitectState>({ status: "idle" });
+  const [adoptedFindings, setAdoptedFindings] = useState<Set<number>>(new Set());
+  const [dismissedFindings, setDismissedFindings] = useState<Set<number>>(new Set());
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -64,6 +68,62 @@ export function App() {
 
   const existingLookup: ExistingLookup = (path, line) =>
     existingByLine.get(lineKey(path, line)) ?? [];
+
+  const liveFindings = useMemo<ArchitectFindingView[]>(
+    () =>
+      architect.status === "done"
+        ? architect.review.findings
+            .map((f, id) => ({ ...f, id }))
+            .filter((f) => !adoptedFindings.has(f.id) && !dismissedFindings.has(f.id))
+        : [],
+    [architect, adoptedFindings, dismissedFindings],
+  );
+
+  const findingsByLine = useMemo(() => {
+    const m = new Map<string, ArchitectFindingView[]>();
+    for (const f of liveFindings) {
+      if (!f.anchored) continue;
+      const k = lineKey(f.path, f.line);
+      const arr = m.get(k) ?? [];
+      arr.push(f);
+      m.set(k, arr);
+    }
+    return m;
+  }, [liveFindings]);
+
+  const unanchoredFindings = liveFindings.filter((f) => !f.anchored);
+
+  const architectApi: ArchitectApi = useMemo(
+    () => ({
+      get: (path, line) => findingsByLine.get(lineKey(path, line)) ?? [],
+      adopt: (finding) => {
+        const body = finding.fix
+          ? `${finding.comment}\n\n**Suggested fix:** ${finding.fix}`
+          : finding.comment;
+        setComments((prev) => {
+          const key = lineKey(finding.path, finding.line);
+          // Append to an existing draft on the same line instead of overwriting it.
+          const merged = prev[key] ? `${prev[key].body}\n\n${body}` : body;
+          return { ...prev, [key]: { path: finding.path, line: finding.line, body: merged } };
+        });
+        setAdoptedFindings((prev) => new Set(prev).add(finding.id));
+      },
+      dismiss: (finding) => setDismissedFindings((prev) => new Set(prev).add(finding.id)),
+    }),
+    [findingsByLine],
+  );
+
+  async function runArchitect(force = false) {
+    setArchitect({ status: "loading" });
+    try {
+      const review = await runArchitectReview(force);
+      setArchitect({ status: "done", review });
+      setAdoptedFindings(new Set());
+      setDismissedFindings(new Set());
+    } catch (e) {
+      setArchitect({ status: "error", message: (e as Error).message });
+    }
+  }
 
   const sections: Group[] = useMemo(() => {
     if (!payload) return [];
@@ -151,12 +211,16 @@ export function App() {
     <div className="flex h-screen overflow-hidden">
       <Sidebar
         meta={payload.meta}
+        diffScope={payload.diffScope}
         sections={sections}
         active={active}
         counts={counts}
         existingCounts={existingCounts}
         reviewed={reviewed}
         onSelect={setActive}
+        architect={architect}
+        onRunArchitectReview={runArchitect}
+        unanchoredFindings={unanchoredFindings}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -168,6 +232,7 @@ export function App() {
               index={index}
               comments={commentsApi}
               existing={existingLookup}
+              architect={architectApi}
               reviewed={reviewed.has(active)}
               onToggleReviewed={() => toggleReviewed(active)}
             />

@@ -2,6 +2,7 @@
 import { createInterface } from "node:readline";
 import open from "open";
 import { parseUnifiedDiff } from "./diff/parse.js";
+import { formatAge } from "./format.js";
 import { groupDiff } from "./group/index.js";
 import {
   hostForId,
@@ -22,6 +23,7 @@ interface Args {
   model?: string;
   local: boolean;
   base?: string;
+  sinceLastReview: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -31,6 +33,7 @@ function parseArgs(argv: string[]): Args {
   let model: string | undefined;
   let local = false;
   let base: string | undefined;
+  let sinceLastReview = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--no-open") noOpen = true;
@@ -38,12 +41,13 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--base") base = argv[++i];
     else if (a === "--port") port = Number(argv[++i]);
     else if (a === "--model") model = argv[++i];
+    else if (a === "--since-last-review") sinceLastReview = true;
     else if (a === "-h" || a === "--help") {
       printHelp();
       process.exit(0);
     } else if (!a.startsWith("-")) input = a;
   }
-  return { input, port, noOpen, model, local, base };
+  return { input, port, noOpen, model, local, base, sinceLastReview };
 }
 
 /**
@@ -86,7 +90,8 @@ function printPullList(pulls: PullSummary[]) {
     }
     const n = String(i + 1).padStart(width);
     const draft = p.state === "draft" ? " (draft)" : "";
-    console.error(`  ${n}. #${p.id}  ${p.title}${draft}  — ${p.author}`);
+    const age = `\x1b[2m· waiting ${formatAge(p.createdAt)}\x1b[0m`;
+    console.error(`  ${n}. #${p.id}  ${p.title}${draft}  — ${p.author}  ${age}`);
   }
   console.error(
     `\n  ${String(localChoice).padStart(width)}. Review the current local branch (no PR/MR)`,
@@ -132,12 +137,28 @@ Usage:
   reviewer --local                    (review the current branch, no PR needed)
 
 Options:
-  --local        review the current branch's changes (commits + uncommitted)
-  --base <ref>   base to diff against for --local (default: origin/HEAD, else main/master)
-  --port <n>     bind to a specific port (default: free ephemeral port)
-  --model <name> Claude model for grouping (e.g. sonnet, opus; default: CLI default)
-  --no-open      don't open the browser automatically
-  -h, --help     show this help`);
+  --local              review the current branch's changes (commits + uncommitted)
+  --base <ref>         base to diff against for --local (default: origin/HEAD, else main/master)
+  --since-last-review  only show changes since your last review (GitHub only)
+  --port <n>           bind to a specific port (default: free ephemeral port)
+  --model <name>       Claude model for grouping (e.g. sonnet, opus; default: CLI default)
+  --no-open            don't open the browser automatically
+  -h, --help           show this help`);
+}
+
+/**
+ * Decide whether to fetch the full diff or just the changes since the
+ * reviewer's last review. Skips the prompt (and the lookup) entirely when
+ * the host doesn't support it (GitLab, local) or the flag was passed.
+ */
+async function resolveSinceLastReview(host: Host, flagSet: boolean): Promise<boolean> {
+  if (flagSet) return true;
+  const last = await host.getLastReview?.();
+  if (!last) return false;
+  console.error("\n  1. full diff");
+  console.error(`  2. since your last review (${formatAge(last.submittedAt)} ago)`);
+  const ans = (await promptLine("Pick [1]: ")).trim();
+  return ans === "2";
 }
 
 async function main() {
@@ -149,8 +170,15 @@ async function main() {
       ? (console.error("→ Resolving PR/MR…"), await resolveHost(args.input))
       : await pickOpenPull(args.base);
 
+  const sinceLastReview = await resolveSinceLastReview(host, args.sinceLastReview);
+
   console.error("→ Fetching diff…");
-  const { meta, diffText, comments: existingComments } = await host.fetch();
+  const { meta, diffText, comments: existingComments, diffScope } = await host.fetch({
+    sinceLastReview,
+  });
+  if (diffScope === "since-last-review") {
+    console.error("  showing changes since your last review");
+  }
   const diff = parseUnifiedDiff(diffText);
   const fileCount = diff.files.length;
   const label = meta.host === "local" ? `local ${meta.headRef}` : `${meta.host} #${meta.id}`;
@@ -166,9 +194,10 @@ async function main() {
   }
 
   const server = await startServer(
-    { meta, files: diff.files, grouping, existingComments },
+    { meta, files: diff.files, grouping, existingComments, diffScope },
     host,
     args.port,
+    { diffText, model: args.model },
   );
   console.error(`\n  Review ready: ${server.url}\n  Press Ctrl-C to stop.`);
 

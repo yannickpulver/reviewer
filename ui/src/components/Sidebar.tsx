@@ -1,7 +1,9 @@
-import { CheckCircle2, GitPullRequest, MessageSquare } from "lucide-react";
-import type { Group, PullMeta, PullState } from "@/types";
+import { CheckCircle2, GitPullRequest, History, Loader2, MessageSquare, Sparkles } from "lucide-react";
+import type { ArchitectReview, DiffScope, Group, PullMeta, PullState } from "@/types";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { ArchitectFindingView } from "./DiffView";
 
 const STATE_STYLES: Record<PullState, string> = {
   open: "border-transparent bg-emerald-500/15 text-emerald-700",
@@ -10,24 +12,39 @@ const STATE_STYLES: Record<PullState, string> = {
   closed: "border-transparent bg-red-500/15 text-red-700",
 };
 
+/** Client-side state machine for the "Claude review" action. */
+export type ArchitectState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "done"; review: ArchitectReview };
+
 interface Props {
   meta: PullMeta;
+  diffScope: DiffScope;
   sections: Group[];
   active: number;
   counts: number[];
   existingCounts: number[];
   reviewed: Set<number>;
   onSelect: (index: number) => void;
+  architect: ArchitectState;
+  onRunArchitectReview: (force?: boolean) => void;
+  unanchoredFindings: ArchitectFindingView[];
 }
 
 export function Sidebar({
   meta,
+  diffScope,
   sections,
   active,
   counts,
   existingCounts,
   reviewed,
   onSelect,
+  architect,
+  onRunArchitectReview,
+  unanchoredFindings,
 }: Props) {
   return (
     <aside className="flex h-screen w-80 shrink-0 flex-col border-r bg-card">
@@ -51,6 +68,15 @@ export function Sidebar({
         <p className="font-mono text-xs text-muted-foreground">
           {meta.headRef} → {meta.baseRef}
         </p>
+        {diffScope === "since-last-review" && (
+          <p className="flex items-center gap-1 text-xs text-muted-foreground">
+            <History className="size-3" /> since your last review
+          </p>
+        )}
+      </div>
+
+      <div className="border-b px-2 py-2">
+        <ArchitectReviewButton state={architect} onRun={onRunArchitectReview} />
       </div>
 
       <nav className="flex-1 overflow-y-auto p-2">
@@ -93,7 +119,81 @@ export function Sidebar({
             </button>
           );
         })}
+
+        {unanchoredFindings.length > 0 && (
+          <div className="mt-2 space-y-1 border-t px-1 pt-2">
+            <p className="px-2 text-xs font-medium text-muted-foreground">
+              Other findings (couldn't anchor to a diff line)
+            </p>
+            {unanchoredFindings.map((f) => (
+              <div key={f.id} className="rounded-md border bg-muted/20 px-2 py-1.5 text-xs">
+                <div className="font-mono text-muted-foreground">
+                  {f.path}:{f.line}
+                </div>
+                <div>{f.comment}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </nav>
     </aside>
+  );
+}
+
+function ArchitectReviewButton({
+  state,
+  onRun,
+}: {
+  state: ArchitectState;
+  onRun: (force?: boolean) => void;
+}) {
+  if (state.status === "loading") {
+    return (
+      <Button variant="outline" size="sm" disabled className="w-full justify-start gap-2">
+        <Loader2 className="size-4 animate-spin" /> Reviewing…
+      </Button>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <div className="space-y-1.5">
+        <p className="px-1 text-xs text-red-600">{state.message}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full justify-start gap-2"
+          onClick={() => onRun()}
+        >
+          <Sparkles className="size-4" /> Retry Claude review
+        </Button>
+      </div>
+    );
+  }
+
+  if (state.status === "done") {
+    const clean = state.review.verdict === "clean";
+    return (
+      <button
+        onClick={() => onRun(true)}
+        title="Click to re-run"
+        className="flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60"
+      >
+        {clean ? (
+          <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+        ) : (
+          <Sparkles className="size-4 shrink-0 text-muted-foreground" />
+        )}
+        <span className={cn("truncate", clean && "text-emerald-700")}>
+          {clean ? "No issues found" : state.review.summary}
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <Button variant="outline" size="sm" className="w-full justify-start gap-2" onClick={() => onRun()}>
+      <Sparkles className="size-4" /> Claude review
+    </Button>
   );
 }

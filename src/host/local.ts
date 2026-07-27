@@ -16,7 +16,7 @@ export class LocalHost implements Host {
     private readonly run: Runner,
   ) {}
 
-  async fetch(): Promise<FetchResult> {
+  async fetch(_opts?: { sinceLastReview?: boolean }): Promise<FetchResult> {
     const headRef = (await this.run("git", ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
     const headSha = (await this.run("git", ["rev-parse", "HEAD"])).stdout.trim();
     const mergeBase = (await this.run("git", ["merge-base", this.base, "HEAD"])).stdout.trim();
@@ -37,7 +37,7 @@ export class LocalHost implements Host {
       headSha,
       state: "open",
     };
-    return { meta, diffText: diff.stdout, comments: [] };
+    return { meta, diffText: diff.stdout, comments: [], diffScope: "full" };
   }
 
   async postReview(
