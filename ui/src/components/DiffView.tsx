@@ -320,14 +320,16 @@ function LineRow({
   );
 }
 
-const SEVERITY_STYLES: Record<ArchitectSeverity, string> = {
+/** Severity → border/background classes. Shared with Sidebar's findings list. */
+export const SEVERITY_STYLES: Record<ArchitectSeverity, string> = {
   important: "border-red-500/30 bg-red-500/10",
   design: "border-purple-500/30 bg-purple-500/10",
   nit: "border-zinc-500/30 bg-zinc-500/10",
   "pre-existing": "border-amber-500/30 bg-amber-500/10",
 };
 
-const SEVERITY_LABELS: Record<ArchitectSeverity, string> = {
+/** Severity → display label. Shared with Sidebar's findings list. */
+export const SEVERITY_LABELS: Record<ArchitectSeverity, string> = {
   important: "Important",
   design: "Design",
   nit: "Nit",
@@ -339,12 +341,18 @@ export function ArchitectFindingCard({
   onAdopt,
   onDismiss,
 }: {
-  finding: ArchitectFinding;
+  finding: ArchitectFindingView;
   onAdopt: () => void;
   onDismiss: () => void;
 }) {
   return (
-    <div className={cn("space-y-2 rounded-md border p-3", SEVERITY_STYLES[finding.severity])}>
+    <div
+      id={`finding-${finding.id}`}
+      className={cn(
+        "space-y-2 rounded-md border p-3 transition-shadow duration-700",
+        SEVERITY_STYLES[finding.severity],
+      )}
+    >
       <div className="flex items-start gap-2">
         <span className="mt-0.5 shrink-0 rounded border border-foreground/10 bg-background/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
           {SEVERITY_LABELS[finding.severity]}

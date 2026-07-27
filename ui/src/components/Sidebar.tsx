@@ -1,9 +1,17 @@
-import { CheckCircle2, GitPullRequest, History, Loader2, MessageSquare, Sparkles } from "lucide-react";
+import {
+  CheckCircle2,
+  GitPullRequest,
+  History,
+  Loader2,
+  MessageSquare,
+  RotateCw,
+  Sparkles,
+} from "lucide-react";
 import type { ArchitectReview, DiffScope, Group, PullMeta, PullState } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ArchitectFindingView } from "./DiffView";
+import { SEVERITY_LABELS, SEVERITY_STYLES, type ArchitectFindingView } from "./DiffView";
 
 const STATE_STYLES: Record<PullState, string> = {
   open: "border-transparent bg-emerald-500/15 text-emerald-700",
@@ -30,7 +38,8 @@ interface Props {
   onSelect: (index: number) => void;
   architect: ArchitectState;
   onRunArchitectReview: (force?: boolean) => void;
-  unanchoredFindings: ArchitectFindingView[];
+  liveFindings: ArchitectFindingView[];
+  onSelectFinding: (finding: ArchitectFindingView) => void;
 }
 
 export function Sidebar({
@@ -44,7 +53,8 @@ export function Sidebar({
   onSelect,
   architect,
   onRunArchitectReview,
-  unanchoredFindings,
+  liveFindings,
+  onSelectFinding,
 }: Props) {
   return (
     <aside className="flex h-screen w-80 shrink-0 flex-col border-r bg-card">
@@ -75,8 +85,23 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="border-b px-2 py-2">
+      <div className="space-y-2 border-b px-2 py-2">
         <ArchitectReviewButton state={architect} onRun={onRunArchitectReview} />
+        {architect.status === "done" && architect.review.verdict === "issues" && (
+          liveFindings.length === 0 ? (
+            <p className="px-1 text-xs text-muted-foreground">All findings handled.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {liveFindings.map((f) => (
+                <FindingRow
+                  key={f.id}
+                  finding={f}
+                  onClick={f.anchored ? () => onSelectFinding(f) : undefined}
+                />
+              ))}
+            </div>
+          )
+        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto p-2">
@@ -119,24 +144,47 @@ export function Sidebar({
             </button>
           );
         })}
-
-        {unanchoredFindings.length > 0 && (
-          <div className="mt-2 space-y-1 border-t px-1 pt-2">
-            <p className="px-2 text-xs font-medium text-muted-foreground">
-              Other findings (couldn't anchor to a diff line)
-            </p>
-            {unanchoredFindings.map((f) => (
-              <div key={f.id} className="rounded-md border bg-muted/20 px-2 py-1.5 text-xs">
-                <div className="font-mono text-muted-foreground">
-                  {f.path}:{f.line}
-                </div>
-                <div>{f.comment}</div>
-              </div>
-            ))}
-          </div>
-        )}
       </nav>
     </aside>
+  );
+}
+
+function FindingRow({
+  finding,
+  onClick,
+}: {
+  finding: ArchitectFindingView;
+  onClick?: () => void;
+}) {
+  const clickable = Boolean(onClick);
+  return (
+    <button
+      type="button"
+      disabled={!clickable}
+      onClick={onClick}
+      className={cn(
+        "w-full space-y-1 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors",
+        clickable ? "hover:bg-muted/60" : "cursor-default opacity-70",
+      )}
+    >
+      <div className="flex items-center gap-1.5">
+        <span
+          className={cn(
+            "shrink-0 rounded border px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+            SEVERITY_STYLES[finding.severity],
+          )}
+        >
+          {SEVERITY_LABELS[finding.severity]}
+        </span>
+        <span className="truncate font-mono text-muted-foreground">
+          {finding.path}:{finding.line}
+        </span>
+      </div>
+      <p className="line-clamp-2 text-foreground/90">{finding.comment}</p>
+      {!finding.anchored && (
+        <p className="text-[10px] text-muted-foreground">not in diff</p>
+      )}
+    </button>
   );
 }
 
@@ -174,11 +222,7 @@ function ArchitectReviewButton({
   if (state.status === "done") {
     const clean = state.review.verdict === "clean";
     return (
-      <button
-        onClick={() => onRun(true)}
-        title="Click to re-run"
-        className="flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60"
-      >
+      <div className="flex w-full items-center gap-2 rounded-md border px-3 py-2 text-sm">
         {clean ? (
           <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
         ) : (
@@ -187,7 +231,16 @@ function ArchitectReviewButton({
         <span className={cn("truncate", clean && "text-emerald-700")}>
           {clean ? "No issues found" : state.review.summary}
         </span>
-      </button>
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Re-run review"
+          className="ml-auto size-6 shrink-0"
+          onClick={() => onRun(true)}
+        >
+          <RotateCw className="size-3.5" />
+        </Button>
+      </div>
     );
   }
 

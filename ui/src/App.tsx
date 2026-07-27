@@ -91,8 +91,6 @@ export function App() {
     return m;
   }, [liveFindings]);
 
-  const unanchoredFindings = liveFindings.filter((f) => !f.anchored);
-
   const architectApi: ArchitectApi = useMemo(
     () => ({
       get: (path, line) => findingsByLine.get(lineKey(path, line)) ?? [],
@@ -171,6 +169,30 @@ export function App() {
     [sectionKeys, payload],
   );
 
+  // Maps a diff line (path:line) to the first section that contains it. sectionKeys
+  // is built by resolving each section's hunk refs through the same index blocksForRefs
+  // uses, so this gives the same section a finding's inline card would render in.
+  const sectionIndexByLineKey = useMemo(() => {
+    const m = new Map<string, number>();
+    sectionKeys.forEach((keys, i) => {
+      for (const k of keys) if (!m.has(k)) m.set(k, i);
+    });
+    return m;
+  }, [sectionKeys]);
+
+  function selectFinding(finding: ArchitectFindingView) {
+    const sectionIdx = sectionIndexByLineKey.get(lineKey(finding.path, finding.line));
+    if (sectionIdx === undefined) return;
+    setActive(sectionIdx);
+    setTimeout(() => {
+      const el = document.getElementById(`finding-${finding.id}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2", "ring-primary");
+      setTimeout(() => el.classList.remove("ring-2", "ring-primary"), 1500);
+    }, 50);
+  }
+
   async function doSubmit() {
     setSubmitting(true);
     setSubmitError(null);
@@ -220,7 +242,8 @@ export function App() {
         onSelect={setActive}
         architect={architect}
         onRunArchitectReview={runArchitect}
-        unanchoredFindings={unanchoredFindings}
+        liveFindings={liveFindings}
+        onSelectFinding={selectFinding}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
