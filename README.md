@@ -15,10 +15,11 @@ make on your behalf.
 
 ```
 reviewer 42
+ ├─ serve a local UI on a free 127.0.0.1 port + open the browser
  ├─ fetch diff + metadata via gh / glab
  ├─ parse the unified diff into a typed model
  ├─ claude -p  →  groups {title, importance, summary, hunks[]}  (chunked for big diffs)
- ├─ serve a local UI on a free 127.0.0.1 port + open the browser
+ │   (the UI polls and shows live progress while this runs)
  └─ "Submit review"  →  posts batched inline comments via gh / glab
 ```
 

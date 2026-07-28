@@ -14,7 +14,7 @@ import {
   type HostKind,
   type PullSummary,
 } from "./host/index.js";
-import { startServer } from "./server/index.js";
+import { startServer, type ServerHandle } from "./server/index.js";
 
 interface Args {
   input: string;
@@ -172,20 +172,52 @@ async function main() {
 
   const sinceLastReview = await resolveSinceLastReview(host, args.sinceLastReview);
 
+  const server = await startServer(host, args.port, { model: args.model });
+  const openLine = args.noOpen ? `\n  Review: ${server.url}` : `\n  Opening ${server.url}`;
+  console.error(`${openLine}\n  Press Ctrl-C to stop.`);
+
+  if (!args.noOpen) await open(server.url);
+
+  const shutdown = () => {
+    server.close().finally(() => process.exit());
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  runPipeline(host, sinceLastReview, args, server).catch((err) => {
+    console.error(`\n✖ ${(err as Error).message}`);
+    server.setError((err as Error).message);
+    process.exitCode = 1;
+  });
+}
+
+async function runPipeline(
+  host: Host,
+  sinceLastReview: boolean,
+  args: Args,
+  server: ServerHandle,
+) {
   console.error("→ Fetching diff…");
+  server.setProgress({ step: "fetching" });
   const { meta, diffText, comments: existingComments, diffScope } = await host.fetch({
     sinceLastReview,
   });
   if (diffScope === "since-last-review") {
     console.error("  showing changes since your last review");
   }
+
   const diff = parseUnifiedDiff(diffText);
   const fileCount = diff.files.length;
   const label = meta.host === "local" ? `local ${meta.headRef}` : `${meta.host} #${meta.id}`;
   console.error(`  ${label}: "${meta.title}" — ${fileCount} file(s)`);
 
   console.error("→ Grouping with Claude…");
-  const grouping = await groupDiff(diff, diffText, { model: args.model });
+  server.setProgress({ step: "grouping" });
+  const grouping = await groupDiff(diff, diffText, {
+    model: args.model,
+    onProgress: (batchIndex, batches) =>
+      server.setProgress({ step: "grouping", batch: batchIndex + 1, batches }),
+  });
   console.error(`  ${grouping.groups.length} group(s)` +
     (grouping.ungrouped.length ? `, ${grouping.ungrouped.length} ungrouped hunk(s)` : ""));
 
@@ -193,21 +225,7 @@ async function main() {
     console.error(`  ${existingComments.length} existing comment(s) from reviewers`);
   }
 
-  const server = await startServer(
-    { meta, files: diff.files, grouping, existingComments, diffScope },
-    host,
-    args.port,
-    { diffText, model: args.model },
-  );
-  console.error(`\n  Review ready: ${server.url}\n  Press Ctrl-C to stop.`);
-
-  if (!args.noOpen) await open(server.url);
-
-  const shutdown = () => {
-    server.close().finally(() => process.exit(0));
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  server.setPayload({ meta, files: diff.files, grouping, existingComments, diffScope }, diffText);
 }
 
 main().catch((err) => {

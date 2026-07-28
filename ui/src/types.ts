@@ -74,6 +74,26 @@ export interface ReviewPayload {
   diffScope: DiffScope;
 }
 
+export type BuildStep = "fetching" | "grouping";
+
+export interface BuildingState {
+  status: "building";
+  step: BuildStep;
+  batch?: number;
+  batches?: number;
+}
+
+export interface ReviewErrorState {
+  status: "error";
+  message: string;
+}
+
+export interface ReadyState extends ReviewPayload {
+  status: "ready";
+}
+
+export type ReviewApiResponse = BuildingState | ReviewErrorState | ReadyState;
+
 export interface ReviewComment {
   path: string;
   line: number;

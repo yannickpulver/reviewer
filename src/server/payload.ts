@@ -25,3 +25,25 @@ export interface SubmitBody {
   summary: string;
   action: ReviewAction;
 }
+
+export type BuildStep = "fetching" | "grouping";
+
+/** Progress reported by GET /api/review while the pipeline is still running. */
+export interface BuildingState {
+  status: "building";
+  step: BuildStep;
+  batch?: number;
+  batches?: number;
+}
+
+export interface ReviewErrorState {
+  status: "error";
+  message: string;
+}
+
+export interface ReadyState extends ReviewPayload {
+  status: "ready";
+}
+
+/** Response shape of GET /api/review. */
+export type ReviewApiResponse = BuildingState | ReviewErrorState | ReadyState;

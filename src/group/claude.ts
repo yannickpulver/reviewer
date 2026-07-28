@@ -17,6 +17,8 @@ export interface GroupOptions {
   batchBudget?: number;
   /** Claude model to pass to the CLI; omit to use the CLI's default. */
   model?: string;
+  /** Called before each batch's Claude call, with a 0-based batch index and the total. */
+  onProgress?: (batchIndex: number, totalBatches: number) => void;
 }
 
 /** A single file's slice of the raw diff plus its known hunk refs. */
@@ -46,7 +48,8 @@ export async function groupDiff(
 
   try {
     const parts: Grouping[] = [];
-    for (const batch of batches) {
+    for (const [i, batch] of batches.entries()) {
+      opts.onProgress?.(i, batches.length);
       const knownRefs = batch.flatMap((s) => s.refs);
       const raw = await callClaude(buildPrompt(batch), run, opts.model);
       parts.push(reconcileGrouping(raw, knownRefs));

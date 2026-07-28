@@ -6,7 +6,7 @@ import type { Host } from "../host/types.js";
 import { architectReview, type ArchitectReview } from "../review/architect.js";
 import { askClaude, type AskInput } from "./ask.js";
 import { findUiDist } from "./paths.js";
-import type { ReviewPayload, SubmitBody } from "./payload.js";
+import type { BuildingState, ReviewApiResponse, ReviewPayload, SubmitBody } from "./payload.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -24,32 +24,42 @@ export interface RunningServer {
 }
 
 export interface ReviewOptions {
-  /** Raw unified diff text, needed for the independent architect review. */
-  diffText: string;
   /** Claude model to use for the architect review; omit to use the CLI default. */
   model?: string;
 }
 
+export interface ServerHandle extends RunningServer {
+  setProgress: (update: Omit<BuildingState, "status">) => void;
+  /** Marks the review ready; `diffText` is stashed for the architect review. */
+  setPayload: (payload: ReviewPayload, diffText: string) => void;
+  setError: (message: string) => void;
+}
+
 /**
  * Start the local review server on a free ephemeral port (or `preferredPort`),
- * bound to 127.0.0.1. Serves the built UI and the review API.
+ * bound to 127.0.0.1. Serves the built UI and the review API. The review
+ * payload isn't known yet — the caller reports progress via the returned
+ * handle and hands off the finished payload once the pipeline completes.
  */
 export function startServer(
-  payload: ReviewPayload,
   host: Host,
   preferredPort = 0,
-  reviewOptions: ReviewOptions = { diffText: "" },
-): Promise<RunningServer> {
+  reviewOptions: ReviewOptions = {},
+): Promise<ServerHandle> {
   const uiDist = findUiDist();
   const app = new Hono();
+
+  let state: ReviewApiResponse = { status: "building", step: "fetching" };
+  let diffText = "";
 
   // Cache the architect review in memory (a promise, so concurrent clicks dedupe);
   // `?force=1` clears it and reruns.
   let architectPromise: Promise<ArchitectReview> | null = null;
 
-  app.get("/api/review", (c) => c.json(payload));
+  app.get("/api/review", (c) => c.json(state));
 
   app.post("/api/review", async (c) => {
+    if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
     const body = (await c.req.json()) as SubmitBody;
     if (!Array.isArray(body.comments)) {
       return c.json({ error: "comments must be an array" }, 400);
@@ -64,6 +74,7 @@ export function startServer(
   });
 
   app.post("/api/ask", async (c) => {
+    if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
     const body = (await c.req.json()) as Partial<AskInput>;
     if (typeof body.question !== "string" || !body.question.trim()) {
       return c.json({ error: "question is required" }, 400);
@@ -82,13 +93,11 @@ export function startServer(
   });
 
   app.post("/api/architect-review", async (c) => {
+    if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
+    const files = state.files;
     const force = c.req.query("force") === "1";
     if (force || !architectPromise) {
-      architectPromise = architectReview(
-        reviewOptions.diffText,
-        payload.files,
-        reviewOptions.model,
-      ).catch((err) => {
+      architectPromise = architectReview(diffText, files, reviewOptions.model).catch((err) => {
         architectPromise = null; // don't cache failures — let the next click retry
         throw err;
       });
@@ -117,6 +126,17 @@ export function startServer(
             new Promise<void>((res, rej) =>
               server.close((e) => (e ? rej(e) : res())),
             ),
+          setProgress: (update) => {
+            if (state.status === "error") return;
+            state = { status: "building", ...update };
+          },
+          setPayload: (payload, dt) => {
+            diffText = dt;
+            state = { status: "ready", ...payload };
+          },
+          setError: (message) => {
+            state = { status: "error", message };
+          },
         });
       },
     );

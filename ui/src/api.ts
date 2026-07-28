@@ -1,6 +1,6 @@
-import type { ArchitectReview, ReviewAction, ReviewComment, ReviewPayload } from "./types";
+import type { ArchitectReview, ReviewAction, ReviewApiResponse, ReviewComment } from "./types";
 
-export async function getReview(): Promise<ReviewPayload> {
+export async function getReview(): Promise<ReviewApiResponse> {
   const res = await fetch("/api/review");
   if (!res.ok) throw new Error(`Failed to load review (${res.status})`);
   return res.json();

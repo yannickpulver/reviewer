@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
-import type { Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
+import { CheckCircle2, Circle, ExternalLink, Loader2 } from "lucide-react";
+import type { BuildingState, BuildStep, Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
 import { getReview, runArchitectReview, submitReview } from "./api";
 import { indexHunks, lineKey } from "./lib/diff";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import type { ArchitectApi, ArchitectFindingView, CommentsApi, ExistingLookup } 
 
 export function App() {
   const [payload, setPayload] = useState<ReviewPayload | null>(null);
+  const [building, setBuilding] = useState<BuildingState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<string, ReviewComment>>({});
   const [active, setActive] = useState(0);
@@ -30,7 +31,38 @@ export function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    getReview().then(setPayload).catch((e) => setError(e.message));
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
+    const MAX_FAILURES = 5;
+    async function poll() {
+      try {
+        const data = await getReview();
+        if (cancelled) return;
+        failures = 0;
+        if (data.status === "building") {
+          setBuilding(data);
+          timer = setTimeout(poll, 700);
+        } else if (data.status === "error") {
+          setError(data.message);
+        } else {
+          setPayload(data);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        failures++;
+        if (failures >= MAX_FAILURES) {
+          setError((e as Error).message);
+        } else {
+          timer = setTimeout(poll, 700);
+        }
+      }
+    }
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   // Scroll back to the top whenever the active section changes.
@@ -209,7 +241,9 @@ export function App() {
 
   if (error) return <Centered>⚠️ {error}</Centered>;
   if (!payload) {
-    return (
+    return building ? (
+      <BuildingPanel state={building} />
+    ) : (
       <Centered>
         <Loader2 className="size-5 animate-spin" /> Loading review…
       </Centered>
@@ -419,6 +453,48 @@ function ConfirmDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+const BUILD_STEPS: { key: BuildStep; label: string }[] = [
+  { key: "fetching", label: "Fetching diff" },
+  { key: "grouping", label: "Grouping with Claude" },
+];
+
+function BuildingPanel({ state }: { state: BuildingState }) {
+  const activeIndex = BUILD_STEPS.findIndex((s) => s.key === state.step);
+  return (
+    <Centered>
+      <div className="flex w-72 flex-col gap-2">
+        {BUILD_STEPS.map((s, i) => {
+          const done = i < activeIndex;
+          const current = i === activeIndex;
+          const showBatch = s.key === "grouping" && current && (state.batches ?? 0) > 1;
+          return (
+            <div
+              key={s.key}
+              className={cn(
+                "flex items-center gap-2 text-sm",
+                current ? "text-foreground" : "text-muted-foreground",
+                !done && !current && "opacity-50",
+              )}
+            >
+              {done ? (
+                <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+              ) : current ? (
+                <Loader2 className="size-4 shrink-0 animate-spin" />
+              ) : (
+                <Circle className="size-4 shrink-0" />
+              )}
+              <span>
+                {s.label}
+                {showBatch ? ` (batch ${state.batch}/${state.batches})` : ""}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </Centered>
   );
 }
 
