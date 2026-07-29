@@ -47,6 +47,7 @@ export function App() {
           setError(data.message);
         } else {
           setPayload(data);
+          if (data.architectStarted) runArchitect();
         }
       } catch (e) {
         if (cancelled) return;

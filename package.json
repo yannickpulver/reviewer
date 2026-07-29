@@ -1,6 +1,6 @@
 {
   "name": "reviewer",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Local CLI that groups a PR/MR diff with Claude Code and serves an interactive review UI",
   "type": "module",
   "bin": {

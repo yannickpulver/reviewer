@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import type { DiffFile } from "../diff/types.js";
 import type { Host } from "../host/types.js";
 import { architectReview, type ArchitectReview } from "../review/architect.js";
 import { askClaude, type AskInput } from "./ask.js";
@@ -33,6 +34,8 @@ export interface ServerHandle extends RunningServer {
   /** Marks the review ready; `diffText` is stashed for the architect review. */
   setPayload: (payload: ReviewPayload, diffText: string) => void;
   setError: (message: string) => void;
+  /** Kick off the architect review early (e.g. in parallel with grouping). */
+  startArchitect: (diffText: string, files: DiffFile[]) => void;
 }
 
 /**
@@ -55,6 +58,14 @@ export function startServer(
   // Cache the architect review in memory (a promise, so concurrent clicks dedupe);
   // `?force=1` clears it and reruns.
   let architectPromise: Promise<ArchitectReview> | null = null;
+
+  const launchArchitect = (dt: string, files: DiffFile[]) => {
+    architectPromise = architectReview(dt, files, reviewOptions.model).catch((err) => {
+      architectPromise = null; // don't cache failures — let the next click retry
+      throw err;
+    });
+    return architectPromise;
+  };
 
   app.get("/api/review", (c) => c.json(state));
 
@@ -94,16 +105,11 @@ export function startServer(
 
   app.post("/api/architect-review", async (c) => {
     if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
-    const files = state.files;
     const force = c.req.query("force") === "1";
-    if (force || !architectPromise) {
-      architectPromise = architectReview(diffText, files, reviewOptions.model).catch((err) => {
-        architectPromise = null; // don't cache failures — let the next click retry
-        throw err;
-      });
-    }
+    const promise =
+      force || !architectPromise ? launchArchitect(diffText, state.files) : architectPromise;
     try {
-      const result = await architectPromise;
+      const result = await promise;
       return c.json(result);
     } catch (err) {
       return c.json({ error: (err as Error).message }, 502);
@@ -136,6 +142,10 @@ export function startServer(
           },
           setError: (message) => {
             state = { status: "error", message };
+          },
+          startArchitect: (dt, files) => {
+            diffText = dt;
+            if (!architectPromise) launchArchitect(dt, files);
           },
         });
       },

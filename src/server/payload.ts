@@ -17,6 +17,8 @@ export interface ReviewPayload {
   existingComments: ExistingComment[];
   /** Whether the diff covers the whole PR/MR or just the changes since the reviewer's last review. */
   diffScope: DiffScope;
+  /** True when the architect review was started alongside grouping (--architect). */
+  architectStarted?: boolean;
 }
 
 /** Body of POST /api/review. */

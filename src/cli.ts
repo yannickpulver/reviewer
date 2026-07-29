@@ -24,6 +24,7 @@ interface Args {
   local: boolean;
   base?: string;
   sinceLastReview: boolean;
+  architect: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -34,6 +35,7 @@ function parseArgs(argv: string[]): Args {
   let local = false;
   let base: string | undefined;
   let sinceLastReview = false;
+  let architect = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--no-open") noOpen = true;
@@ -42,12 +44,13 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--port") port = Number(argv[++i]);
     else if (a === "--model") model = argv[++i];
     else if (a === "--since-last-review") sinceLastReview = true;
+    else if (a === "--architect") architect = true;
     else if (a === "-h" || a === "--help") {
       printHelp();
       process.exit(0);
     } else if (!a.startsWith("-")) input = a;
   }
-  return { input, port, noOpen, model, local, base, sinceLastReview };
+  return { input, port, noOpen, model, local, base, sinceLastReview, architect };
 }
 
 /**
@@ -140,6 +143,7 @@ Options:
   --local              review the current branch's changes (commits + uncommitted)
   --base <ref>         base to diff against for --local (default: origin/HEAD, else main/master)
   --since-last-review  only show changes since your last review (GitHub only)
+  --architect          run the Claude architect review in parallel with grouping
   --port <n>           bind to a specific port (default: free ephemeral port)
   --model <name>       Claude model for grouping (e.g. sonnet, opus; default: CLI default)
   --no-open            don't open the browser automatically
@@ -211,6 +215,11 @@ async function runPipeline(
   const label = meta.host === "local" ? `local ${meta.headRef}` : `${meta.host} #${meta.id}`;
   console.error(`  ${label}: "${meta.title}" — ${fileCount} file(s)`);
 
+  if (args.architect) {
+    console.error("→ Starting architect review (in parallel)…");
+    server.startArchitect(diffText, diff.files);
+  }
+
   console.error("→ Grouping with Claude…");
   server.setProgress({ step: "grouping" });
   const grouping = await groupDiff(diff, diffText, {
@@ -225,7 +234,10 @@ async function runPipeline(
     console.error(`  ${existingComments.length} existing comment(s) from reviewers`);
   }
 
-  server.setPayload({ meta, files: diff.files, grouping, existingComments, diffScope }, diffText);
+  server.setPayload(
+    { meta, files: diff.files, grouping, existingComments, diffScope, architectStarted: args.architect },
+    diffText,
+  );
 }
 
 main().catch((err) => {

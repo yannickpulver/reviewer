@@ -72,6 +72,7 @@ export interface ReviewPayload {
   grouping: Grouping;
   existingComments: ExistingComment[];
   diffScope: DiffScope;
+  architectStarted?: boolean;
 }
 
 export type BuildStep = "fetching" | "grouping";
