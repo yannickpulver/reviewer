@@ -31,7 +31,7 @@ jobs:
       - name: Install deps
         run: |
           pnpm install --frozen-lockfile
-          pnpm --dir ui install --frozen-lockfile --ignore-workspace
+          pnpm --dir ui install --frozen-lockfile
 
       - name: Set version
         run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version --allow-same-version
