@@ -48,15 +48,19 @@ function parseArgs(argv: string[]): Args {
     else if (a === "-h" || a === "--help") {
       printHelp();
       process.exit(0);
-    } else if (!a.startsWith("-")) input = a;
+    } else if (a.startsWith("-")) {
+      console.error(`Unknown option: ${a} (see --help)`);
+      process.exit(1);
+    } else input = a;
   }
   return { input, port, noOpen, model, local, base, sinceLastReview, architect };
 }
 
 /**
  * With no argument: list open PRs/MRs and let the user pick one, plus a final
- * "review the current local branch" option for pre-PR work. Falls back to a
- * local review when there's no remote or no open PRs/MRs.
+ * "review the current local branch" option for pre-PR work. Fails when there's
+ * no remote or no open PRs/MRs — reviewing the local branch stays explicit
+ * (--local or the picker option).
  */
 async function pickOpenPull(base?: string): Promise<Host> {
   console.error("→ Listing open PRs/MRs…");
@@ -64,13 +68,11 @@ async function pickOpenPull(base?: string): Promise<Host> {
   try {
     listing = await listOpenPulls();
   } catch (e) {
-    console.error(`  (${(e as Error).message}) — reviewing the current local branch.`);
-    return makeLocalHost(base);
+    throw new Error(`${(e as Error).message} — use --local to review the current branch`);
   }
   const { host, repo, pulls } = listing;
   if (pulls.length === 0) {
-    console.error("  No open PRs/MRs — reviewing the current local branch.");
-    return makeLocalHost(base);
+    throw new Error("no open PRs/MRs — use --local to review the current branch");
   }
   printPullList(pulls);
   return promptChoice(pulls, host, repo, base);
