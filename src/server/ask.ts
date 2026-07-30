@@ -1,3 +1,4 @@
+import { claudeEnvelopeError } from "../group/claude.js";
 import { runCommand, type Runner } from "../util/exec.js";
 
 interface ClaudeEnvelope {
@@ -19,7 +20,7 @@ export async function askClaude(input: AskInput, run: Runner = runCommand): Prom
   const { stdout } = await run("claude", ["-p", "--output-format", "json"], buildAskPrompt(input));
   const env = JSON.parse(stdout) as ClaudeEnvelope;
   if (env.is_error || typeof env.result !== "string") {
-    throw new Error("claude returned an error envelope");
+    throw new Error(claudeEnvelopeError(env));
   }
   return env.result.trim();
 }

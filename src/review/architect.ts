@@ -1,5 +1,5 @@
 import type { DiffFile } from "../diff/types.js";
-import { extractJsonObject } from "../group/claude.js";
+import { claudeEnvelopeError, extractJsonObject } from "../group/claude.js";
 import { runCommand, type Runner } from "../util/exec.js";
 
 export type ArchitectSeverity = "important" | "design" | "nit" | "pre-existing";
@@ -46,7 +46,7 @@ export async function architectReview(
   const { stdout } = await run("claude", args, buildPrompt(diffText));
   const env = JSON.parse(stdout) as ClaudeEnvelope;
   if (env.is_error || typeof env.result !== "string") {
-    throw new Error("claude returned an error envelope");
+    throw new Error(claudeEnvelopeError(env));
   }
   const raw = extractJsonObject(env.result);
   return parseReview(raw, files);

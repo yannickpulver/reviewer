@@ -137,13 +137,19 @@ interface ClaudeEnvelope {
   is_error?: boolean;
 }
 
+/** Error message for a failed claude envelope, including the model's own error text when present. */
+export function claudeEnvelopeError(env: ClaudeEnvelope): string {
+  const detail = typeof env.result === "string" && env.result.trim() ? `: ${env.result.trim()}` : "";
+  return `claude returned an error envelope${detail}`;
+}
+
 async function callClaude(prompt: string, run: Runner, model?: string): Promise<unknown> {
   const args = ["-p", "--output-format", "json"];
   if (model) args.push("--model", model);
   const { stdout } = await run("claude", args, prompt);
   const env = JSON.parse(stdout) as ClaudeEnvelope;
   if (env.is_error || typeof env.result !== "string") {
-    throw new Error("claude returned an error envelope");
+    throw new Error(claudeEnvelopeError(env));
   }
   return extractJsonObject(env.result);
 }

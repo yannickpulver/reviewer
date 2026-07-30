@@ -46,7 +46,9 @@ export const runCommand: Runner = (cmd, args, input) =>
       if (code === 0) {
         resolve({ stdout, stderr });
       } else {
-        reject(new Error(`\`${cmd} ${args.join(" ")}\` exited ${code}: ${stderr.trim()}`));
+        // Some CLIs (e.g. `claude --output-format json`) report errors on stdout.
+        const detail = stderr.trim() || stdout.trim().slice(0, 500);
+        reject(new Error(`\`${cmd} ${args.join(" ")}\` exited ${code}: ${detail}`));
       }
     });
 
