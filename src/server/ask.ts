@@ -1,4 +1,4 @@
-import { claudeEnvelopeError } from "../group/claude.js";
+import { claudeArgs, claudeEnvelopeError } from "../group/claude.js";
 import { runCommand, type Runner } from "../util/exec.js";
 
 interface ClaudeEnvelope {
@@ -17,7 +17,7 @@ export interface AskInput {
 
 /** Ask the local `claude` CLI a free-form question about a diff line. */
 export async function askClaude(input: AskInput, run: Runner = runCommand): Promise<string> {
-  const { stdout } = await run("claude", ["-p", "--output-format", "json"], buildAskPrompt(input));
+  const { stdout } = await run("claude", claudeArgs(), buildAskPrompt(input));
   const env = JSON.parse(stdout) as ClaudeEnvelope;
   if (env.is_error || typeof env.result !== "string") {
     throw new Error(claudeEnvelopeError(env));

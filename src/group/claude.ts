@@ -137,6 +137,16 @@ interface ClaudeEnvelope {
   is_error?: boolean;
 }
 
+/**
+ * Args for one-shot claude calls: JSON output, no built-in tools, no MCP servers.
+ * Skipping tools/MCP keeps startup fast and forces a single-turn text answer.
+ */
+export function claudeArgs(model?: string): string[] {
+  const args = ["-p", "--output-format", "json", "--tools", "", "--strict-mcp-config"];
+  if (model) args.push("--model", model);
+  return args;
+}
+
 /** Error message for a failed claude envelope, including the model's own error text when present. */
 export function claudeEnvelopeError(env: ClaudeEnvelope): string {
   const detail = typeof env.result === "string" && env.result.trim() ? `: ${env.result.trim()}` : "";
@@ -144,9 +154,7 @@ export function claudeEnvelopeError(env: ClaudeEnvelope): string {
 }
 
 async function callClaude(prompt: string, run: Runner, model?: string): Promise<unknown> {
-  const args = ["-p", "--output-format", "json"];
-  if (model) args.push("--model", model);
-  const { stdout } = await run("claude", args, prompt);
+  const { stdout } = await run("claude", claudeArgs(model), prompt);
   const env = JSON.parse(stdout) as ClaudeEnvelope;
   if (env.is_error || typeof env.result !== "string") {
     throw new Error(claudeEnvelopeError(env));

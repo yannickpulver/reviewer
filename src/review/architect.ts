@@ -1,5 +1,5 @@
 import type { DiffFile } from "../diff/types.js";
-import { claudeEnvelopeError, extractJsonObject } from "../group/claude.js";
+import { claudeArgs, claudeEnvelopeError, extractJsonObject } from "../group/claude.js";
 import { runCommand, type Runner } from "../util/exec.js";
 
 export type ArchitectSeverity = "important" | "design" | "nit" | "pre-existing";
@@ -41,9 +41,7 @@ export async function architectReview(
   model?: string,
   run: Runner = runCommand,
 ): Promise<ArchitectReview> {
-  const args = ["-p", "--output-format", "json"];
-  if (model) args.push("--model", model);
-  const { stdout } = await run("claude", args, buildPrompt(diffText));
+  const { stdout } = await run("claude", claudeArgs(model), buildPrompt(diffText));
   const env = JSON.parse(stdout) as ClaudeEnvelope;
   if (env.is_error || typeof env.result !== "string") {
     throw new Error(claudeEnvelopeError(env));

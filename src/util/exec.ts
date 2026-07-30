@@ -10,6 +10,17 @@ export type Runner = (cmd: string, args: string[], input?: string) => Promise<Ru
 
 const MAX_OUTPUT = 96 * 1024 * 1024;
 
+/** If stdout is a JSON envelope with a string `result` (claude CLI errors), extract it. */
+function jsonResult(stdout: string): string | undefined {
+  try {
+    const parsed = JSON.parse(stdout) as { result?: unknown };
+    if (typeof parsed.result === "string" && parsed.result.trim()) return parsed.result.trim();
+  } catch {
+    // not JSON — fall through to the raw slice
+  }
+  return undefined;
+}
+
 export const runCommand: Runner = (cmd, args, input) =>
   new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
@@ -47,7 +58,7 @@ export const runCommand: Runner = (cmd, args, input) =>
         resolve({ stdout, stderr });
       } else {
         // Some CLIs (e.g. `claude --output-format json`) report errors on stdout.
-        const detail = stderr.trim() || stdout.trim().slice(0, 500);
+        const detail = stderr.trim() || jsonResult(stdout) || stdout.trim().slice(0, 500);
         reject(new Error(`\`${cmd} ${args.join(" ")}\` exited ${code}: ${detail}`));
       }
     });
