@@ -172,11 +172,18 @@ interface ClaudeEnvelope {
 }
 
 /**
- * Args for one-shot claude calls: JSON output, no built-in tools, no MCP servers.
- * Skipping tools/MCP keeps startup fast and forces a single-turn text answer.
+ * Args for one-shot claude calls: JSON output, no built-in tools, no MCP servers,
+ * no settings (CLAUDE.md/hooks/output styles would slow startup and can break
+ * the strict-JSON output contract).
  */
 export function claudeArgs(model?: string): string[] {
-  const args = ["-p", "--output-format", "json", "--tools", "", "--strict-mcp-config"];
+  const args = [
+    "-p",
+    "--output-format", "json",
+    "--tools", "",
+    "--strict-mcp-config",
+    "--setting-sources", "",
+  ];
   if (model) args.push("--model", model);
   return args;
 }
@@ -203,7 +210,8 @@ export function extractJsonObject(text: string): unknown {
   const start = candidate.indexOf("{");
   const end = candidate.lastIndexOf("}");
   if (start === -1 || end === -1 || end < start) {
-    throw new Error("no JSON object found in claude output");
+    const snippet = text.trim().slice(0, 200) || "(empty)";
+    throw new Error(`no JSON object found in claude output: ${snippet}`);
   }
   return JSON.parse(candidate.slice(start, end + 1));
 }

@@ -9,7 +9,7 @@ submit them back as a single review.
 Everything runs locally. The only network calls are the ones `gh`/`glab` already
 make on your behalf.
 
-![Reviewer UI — grouped sections in the sidebar, the selected group's diff with an inline reviewer comment, and the submit bar](docs/screenshot.png?v=2)
+![Reviewer UI — grouped sections in the sidebar, an architect review flag, the selected group's diff with an inline reviewer comment, and the submit bar](docs/screenshot.png?v=3)
 
 ## How it works
 
