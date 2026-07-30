@@ -11,14 +11,17 @@ import type { Grouping } from "./types.js";
 /** Target prompt size per Claude call, in characters (~chars/4 tokens → ~100k tokens). */
 const BATCH_CHAR_BUDGET = 400_000;
 
+/** Max diff body lines per hunk in the grouping prompt — classification doesn't need full bodies. */
+const MAX_HUNK_LINES = 40;
+
 export interface GroupOptions {
   run?: Runner;
   /** Override the per-batch char budget (mainly for tests). */
   batchBudget?: number;
-  /** Claude model to pass to the CLI; omit to use the CLI's default. */
+  /** Claude model to pass to the CLI; defaults to "sonnet" — grouping is classification and doesn't need a bigger model. */
   model?: string;
-  /** Called before each batch's Claude call, with a 0-based batch index and the total. */
-  onProgress?: (batchIndex: number, totalBatches: number) => void;
+  /** Called as each batch completes, with the completed count (1-based) and the total. */
+  onProgress?: (completed: number, totalBatches: number) => void;
 }
 
 /** A single file's slice of the raw diff plus its known hunk refs. */
@@ -47,13 +50,14 @@ export async function groupDiff(
   const batches = packBatches(segments, budget);
 
   try {
-    const parts: Grouping[] = [];
-    for (const [i, batch] of batches.entries()) {
-      opts.onProgress?.(i, batches.length);
-      const knownRefs = batch.flatMap((s) => s.refs);
-      const raw = await callClaude(buildPrompt(batch), run, opts.model);
-      parts.push(reconcileGrouping(raw, knownRefs));
-    }
+    let completed = 0;
+    const parts = await Promise.all(
+      batches.map(async (batch) => {
+        const raw = await callClaude(buildPrompt(batch), run, opts.model ?? "sonnet");
+        opts.onProgress?.(++completed, batches.length);
+        return reconcileGrouping(raw, batch.flatMap((s) => s.refs));
+      }),
+    );
     return sortByImportance(mergeGroupings(parts));
   } catch {
     return fallbackGrouping(diff);
@@ -79,8 +83,38 @@ export function sliceSegments(diff: ParsedDiff, rawDiff: string): FileSegment[] 
   return diff.files.map((f, i) => ({
     path: f.path,
     refs: f.hunks.map((h) => `${f.path}:${h.id}`),
-    diffText: blocks[i] ?? "",
+    diffText: capHunkBodies(blocks[i] ?? "", MAX_HUNK_LINES),
   }));
+}
+
+/** Truncate each hunk's body, keeping all file/hunk headers so every hunk stays identifiable. */
+export function capHunkBodies(diffText: string, maxLines: number): string {
+  const out: string[] = [];
+  let inHunk = false;
+  let body = 0;
+  let omitted = 0;
+  const flush = () => {
+    if (omitted > 0) out.push(`... (${omitted} more lines omitted)`);
+    omitted = 0;
+    body = 0;
+  };
+  for (const line of diffText.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      flush();
+      inHunk = false;
+      out.push(line);
+    } else if (line.startsWith("@@")) {
+      flush();
+      inHunk = true;
+      out.push(line);
+    } else if (inHunk && ++body > maxLines) {
+      omitted++;
+    } else {
+      out.push(line);
+    }
+  }
+  flush();
+  return out.join("\n");
 }
 
 /** Pack whole-file segments into batches under the char budget. */

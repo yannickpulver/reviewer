@@ -147,7 +147,7 @@ Options:
   --since-last-review  only show changes since your last review (GitHub only)
   --architect          run the Claude architect review in parallel with grouping
   --port <n>           bind to a specific port (default: free ephemeral port)
-  --model <name>       Claude model for grouping (e.g. sonnet, opus; default: CLI default)
+  --model <name>       Claude model for grouping (e.g. sonnet, opus; default: sonnet)
   --no-open            don't open the browser automatically
   -h, --help           show this help`);
 }
@@ -226,8 +226,8 @@ async function runPipeline(
   server.setProgress({ step: "grouping" });
   const grouping = await groupDiff(diff, diffText, {
     model: args.model,
-    onProgress: (batchIndex, batches) =>
-      server.setProgress({ step: "grouping", batch: batchIndex + 1, batches }),
+    onProgress: (completed, batches) =>
+      server.setProgress({ step: "grouping", batch: completed, batches }),
   });
   console.error(`  ${grouping.groups.length} group(s)` +
     (grouping.ungrouped.length ? `, ${grouping.ungrouped.length} ungrouped hunk(s)` : ""));

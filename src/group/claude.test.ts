@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractJsonObject, packBatches, sliceSegments, groupDiff } from "./claude.js";
+import { capHunkBodies, extractJsonObject, packBatches, sliceSegments, groupDiff } from "./claude.js";
 import { parseUnifiedDiff } from "../diff/parse.js";
 import type { Runner } from "../util/exec.js";
 
@@ -42,6 +42,24 @@ describe("sliceSegments", () => {
     expect(segs[0]!.refs).toEqual(["a.ts:H0"]);
     expect(segs[0]!.diffText).toContain("a/a.ts");
     expect(segs[0]!.diffText).not.toContain("b.ts");
+  });
+});
+
+describe("capHunkBodies", () => {
+  it("truncates long hunk bodies but keeps all headers", () => {
+    const body = Array.from({ length: 10 }, (_, i) => `+line${i}`).join("\n");
+    const text = `diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,1 +1,10 @@\n${body}\n@@ -20,1 +30,1 @@\n-x\n+y`;
+    const capped = capHunkBodies(text, 3);
+    expect(capped).toContain("@@ -1,1 +1,10 @@");
+    expect(capped).toContain("@@ -20,1 +30,1 @@");
+    expect(capped).toContain("+line2");
+    expect(capped).not.toContain("+line3");
+    expect(capped).toContain("(7 more lines omitted)");
+    expect(capped).toContain("+y");
+  });
+
+  it("leaves short hunks untouched", () => {
+    expect(capHunkBodies(TWO_FILES, 40)).toBe(TWO_FILES);
   });
 });
 
