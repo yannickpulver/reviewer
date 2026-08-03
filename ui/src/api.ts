@@ -1,4 +1,10 @@
-import type { ArchitectReview, ReviewAction, ReviewApiResponse, ReviewComment } from "./types";
+import type {
+  ArchitectReview,
+  Reaction,
+  ReviewAction,
+  ReviewApiResponse,
+  ReviewComment,
+} from "./types";
 
 export async function getReview(): Promise<ReviewApiResponse> {
   const res = await fetch("/api/review");
@@ -26,6 +32,21 @@ export async function runArchitectReview(force = false): Promise<ArchitectReview
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? `Review failed (${res.status})`);
   return data;
+}
+
+export async function toggleReaction(
+  commentId: string,
+  content: string,
+  remove: boolean,
+): Promise<Reaction[]> {
+  const res = await fetch("/api/react", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ commentId, content, remove }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `Reaction failed (${res.status})`);
+  return data.reactions;
 }
 
 export async function askClaude(

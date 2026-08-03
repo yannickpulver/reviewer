@@ -1,6 +1,22 @@
 import { useMemo, useState } from "react";
-import { ChevronRight, MessageSquarePlus, Pencil, Sparkles, Trash2, X } from "lucide-react";
-import type { ArchitectFinding, ArchitectSeverity, DiffLine, ExistingComment, Hunk } from "@/types";
+import {
+  ChevronRight,
+  MessageSquarePlus,
+  Pencil,
+  SmilePlus,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
+import type {
+  ArchitectFinding,
+  ArchitectSeverity,
+  DiffLine,
+  ExistingComment,
+  Hunk,
+  Reaction,
+} from "@/types";
+import { toggleReaction } from "@/api";
 import { cn } from "@/lib/utils";
 import { hunkToText, lineKey } from "@/lib/diff";
 import { highlightBlock, langForPath } from "@/lib/highlight";
@@ -37,6 +53,7 @@ interface Props {
   comments: CommentsApi;
   existing: ExistingLookup;
   architect: ArchitectApi;
+  reactionsSupported: boolean;
 }
 
 function toggler(setter: React.Dispatch<React.SetStateAction<Set<string>>>) {
@@ -48,7 +65,14 @@ function toggler(setter: React.Dispatch<React.SetStateAction<Set<string>>>) {
     });
 }
 
-export function DiffView({ path, hunks, comments, existing, architect }: Props) {
+export function DiffView({
+  path,
+  hunks,
+  comments,
+  existing,
+  architect,
+  reactionsSupported,
+}: Props) {
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [asking, setAsking] = useState<Set<string>>(new Set());
 
@@ -74,6 +98,7 @@ export function DiffView({ path, hunks, comments, existing, architect }: Props) 
               comments={comments}
               existing={existing}
               architect={architect}
+              reactionsSupported={reactionsSupported}
             />
           ))}
         </tbody>
@@ -94,6 +119,7 @@ function HunkRows({
   comments,
   existing,
   architect,
+  reactionsSupported,
 }: {
   path: string;
   hunk: Hunk;
@@ -106,6 +132,7 @@ function HunkRows({
   comments: CommentsApi;
   existing: ExistingLookup;
   architect: ArchitectApi;
+  reactionsSupported: boolean;
 }) {
   const hunkText = hunkToText(hunk);
   const htmlLines = useMemo(
@@ -133,6 +160,7 @@ function HunkRows({
           comments={comments}
           existing={existing}
           architect={architect}
+          reactionsSupported={reactionsSupported}
         />
       ))}
     </>
@@ -151,6 +179,7 @@ function LineRow({
   comments,
   existing,
   architect,
+  reactionsSupported,
 }: {
   path: string;
   line: DiffLine;
@@ -163,6 +192,7 @@ function LineRow({
   comments: CommentsApi;
   existing: ExistingLookup;
   architect: ArchitectApi;
+  reactionsSupported: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
   // Comments anchor to the new (right) side; deleted lines aren't commentable.
@@ -234,9 +264,12 @@ function LineRow({
           <td colSpan={4} className="px-3 py-2">
             <div className="space-y-2 font-sans text-sm">
               {priorComments.filter((c) => !c.resolved).map((c, i) => (
-                <ExistingCommentCard key={i} comment={c} />
+                <ExistingCommentCard key={c.id ?? i} comment={c} reactions={reactionsSupported} />
               ))}
-              <ResolvedComments comments={priorComments.filter((c) => c.resolved)} />
+              <ResolvedComments
+                comments={priorComments.filter((c) => c.resolved)}
+                reactions={reactionsSupported}
+              />
             </div>
           </td>
         </tr>
@@ -388,9 +421,11 @@ export function ArchitectFindingCard({
 
 function ExistingCommentCard({
   comment,
+  reactions,
   muted,
 }: {
   comment: ExistingComment;
+  reactions: boolean;
   muted?: boolean;
 }) {
   return (
@@ -404,11 +439,18 @@ function ExistingCommentCard({
         {comment.author}
       </div>
       <Markdown>{comment.body}</Markdown>
+      {reactions && <ReactionBar comment={comment} />}
     </div>
   );
 }
 
-function ResolvedComments({ comments }: { comments: ExistingComment[] }) {
+function ResolvedComments({
+  comments,
+  reactions,
+}: {
+  comments: ExistingComment[];
+  reactions: boolean;
+}) {
   const [open, setOpen] = useState(false);
   if (comments.length === 0) return null;
   return (
@@ -421,7 +463,104 @@ function ResolvedComments({ comments }: { comments: ExistingComment[] }) {
         {comments.length} resolved comment{comments.length === 1 ? "" : "s"}
       </button>
       {open &&
-        comments.map((c, i) => <ExistingCommentCard key={i} comment={c} muted />)}
+        comments.map((c, i) => (
+          <ExistingCommentCard key={c.id ?? i} comment={c} reactions={reactions} muted />
+        ))}
     </div>
   );
+}
+
+/** The eight reactions GitHub/GitLab both support, in GitHub's order. */
+const REACTION_EMOJI: Record<string, string> = {
+  "+1": "👍",
+  "-1": "👎",
+  laugh: "😄",
+  hooray: "🎉",
+  confused: "😕",
+  heart: "❤️",
+  rocket: "🚀",
+  eyes: "👀",
+};
+
+function ReactionBar({ comment }: { comment: ExistingComment }) {
+  const [reactions, setReactions] = useState<Reaction[]>(comment.reactions ?? []);
+  const [busy, setBusy] = useState(false);
+  const [picking, setPicking] = useState(false);
+
+  const toggle = async (content: string) => {
+    if (busy) return;
+    const existing = reactions.find((r) => r.content === content);
+    const remove = !!existing?.viewerReacted;
+    const before = reactions;
+    setReactions(optimistic(before, content, remove));
+    setBusy(true);
+    setPicking(false);
+    try {
+      setReactions(await toggleReaction(comment.id, content, remove));
+    } catch {
+      setReactions(before);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const shown = reactions.filter((r) => r.count > 0);
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1">
+      {shown.map((r) => (
+        <button
+          key={r.content}
+          disabled={busy}
+          onClick={() => toggle(r.content)}
+          title={r.content}
+          className={cn(
+            "flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs disabled:opacity-50",
+            r.viewerReacted
+              ? "border-primary/40 bg-primary/10 text-foreground"
+              : "border-border bg-background hover:bg-muted",
+          )}
+        >
+          <span>{REACTION_EMOJI[r.content] ?? r.content}</span>
+          <span className="text-muted-foreground">{r.count}</span>
+        </button>
+      ))}
+      <button
+        aria-label="Add reaction"
+        disabled={busy}
+        onClick={() => setPicking((p) => !p)}
+        className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+      >
+        <SmilePlus className="size-3.5" />
+      </button>
+      {picking && (
+        <div className="flex items-center gap-0.5 rounded-full border bg-background px-1 py-0.5">
+          {Object.entries(REACTION_EMOJI).map(([content, emoji]) => (
+            <button
+              key={content}
+              disabled={busy}
+              title={content}
+              onClick={() => toggle(content)}
+              className="rounded-full px-1 text-sm hover:bg-muted disabled:opacity-50"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Local tally update applied before the server confirms. */
+function optimistic(reactions: Reaction[], content: string, remove: boolean): Reaction[] {
+  const existing = reactions.find((r) => r.content === content);
+  if (!existing) return [...reactions, { content, count: 1, viewerReacted: true }];
+  return reactions
+    .map((r) =>
+      r.content === content
+        ? { ...r, count: r.count + (remove ? -1 : 1), viewerReacted: !remove }
+        : r,
+    )
+    .filter((r) => r.count > 0);
 }

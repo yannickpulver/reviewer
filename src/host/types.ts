@@ -28,8 +28,18 @@ export interface ReviewComment {
 /** The verdict attached to a submitted review. */
 export type ReviewAction = "comment" | "approve" | "request_changes";
 
+/** An emoji reaction tally on a comment. */
+export interface Reaction {
+  /** GitHub-style key: "+1" | "-1" | "laugh" | "hooray" | "confused" | "heart" | "rocket" | "eyes" */
+  content: string;
+  count: number;
+  viewerReacted: boolean;
+}
+
 /** An existing inline comment already on the PR/MR, anchored to a new-side line. */
 export interface ExistingComment {
+  /** Provider comment id — the reaction subject. */
+  id: string;
   path: string;
   /** 1-based line in the new file */
   line: number;
@@ -37,6 +47,7 @@ export interface ExistingComment {
   body: string;
   /** Whether the review thread this comment belongs to is resolved. */
   resolved: boolean;
+  reactions: Reaction[];
 }
 
 /** Whether the fetched diff covers the whole PR/MR or just the changes since the reviewer's last review. */
@@ -61,6 +72,8 @@ export interface Host {
   ): Promise<{ url: string }>;
   /** The current user's most recent submitted review (GitHub only), or null/undefined if unsupported/none. */
   getLastReview?(): Promise<{ sha: string; submittedAt: string } | null>;
+  /** Add or remove an emoji reaction on an existing comment; returns the comment's updated reactions. */
+  toggleReaction?(commentId: string, content: string, remove: boolean): Promise<Reaction[]>;
 }
 
 /** Where the PR/MR lives, resolved from a URL or the local repo remote. */

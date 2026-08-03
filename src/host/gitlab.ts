@@ -1,13 +1,50 @@
 import type { Runner } from "../util/exec.js";
+import { currentLogin } from "./index.js";
 import type {
   ExistingComment,
   FetchResult,
   Host,
   PullMeta,
   PullState,
+  Reaction,
   ReviewAction,
   ReviewComment,
 } from "./types.js";
+
+/** Reaction content key ↔ GitLab award emoji name. */
+const AWARD_NAME: Record<string, string> = {
+  "+1": "thumbsup",
+  "-1": "thumbsdown",
+  laugh: "smile",
+  hooray: "tada",
+  confused: "confused",
+  heart: "heart",
+  rocket: "rocket",
+  eyes: "eyes",
+};
+
+const NAME_AWARD: Record<string, string> = Object.fromEntries(
+  Object.entries(AWARD_NAME).map(([k, v]) => [v, k]),
+);
+
+interface GlabAward {
+  id: number;
+  name: string;
+  user: { username: string } | null;
+}
+
+/** Collapse a note's award list into per-content tallies. Unknown award names pass through. */
+function toReactions(awards: GlabAward[], me: string): Reaction[] {
+  const byContent = new Map<string, Reaction>();
+  for (const a of awards) {
+    const content = NAME_AWARD[a.name] ?? a.name;
+    const r = byContent.get(content) ?? { content, count: 0, viewerReacted: false };
+    r.count += 1;
+    if (me && a.user?.username === me) r.viewerReacted = true;
+    byContent.set(content, r);
+  }
+  return [...byContent.values()];
+}
 
 interface GlabMr {
   iid: number;
@@ -78,6 +115,7 @@ export class GitLabHost implements Host {
       ]);
       const discussions = JSON.parse(res.stdout) as Array<{
         notes: Array<{
+          id: number;
           system: boolean;
           body: string;
           author: { username: string } | null;
@@ -90,18 +128,56 @@ export class GitLabHost implements Host {
         for (const n of d.notes ?? []) {
           if (n.system || !n.position || !n.position.new_line) continue;
           out.push({
+            id: String(n.id),
             path: n.position.new_path,
             line: n.position.new_line,
             author: n.author?.username ?? "unknown",
             body: n.body,
             resolved: n.resolved ?? false,
+            reactions: [],
           });
         }
       }
+      if (!out.length) return out;
+      const me = await this.me();
+      await Promise.all(
+        out.map(async (c) => {
+          c.reactions = toReactions(await this.awards(c.id).catch(() => []), me);
+        }),
+      );
       return out;
     } catch {
       return [];
     }
+  }
+
+  private async me(): Promise<string> {
+    return currentLogin("glab", ["api", "user"], this.run, (s) => JSON.parse(s).username);
+  }
+
+  private async awards(noteId: string): Promise<GlabAward[]> {
+    const res = await this.run("glab", [
+      "api", "--paginate",
+      `projects/${this.projectPath}/merge_requests/${this.id}/notes/${noteId}/award_emoji`,
+    ]);
+    return JSON.parse(res.stdout) as GlabAward[];
+  }
+
+  async toggleReaction(commentId: string, content: string, remove: boolean): Promise<Reaction[]> {
+    const name = AWARD_NAME[content] ?? content;
+    const base = `projects/${this.projectPath}/merge_requests/${this.id}/notes/${commentId}/award_emoji`;
+    const me = await this.me();
+    if (remove) {
+      const mine = (await this.awards(commentId)).find(
+        (a) => a.name === name && a.user?.username === me,
+      );
+      if (mine) {
+        await this.run("glab", ["api", "--method", "DELETE", `${base}/${mine.id}`]);
+      }
+    } else {
+      await this.run("glab", ["api", "--method", "POST", base, "-f", `name=${name}`]);
+    }
+    return toReactions(await this.awards(commentId), me);
   }
 
   async postReview(

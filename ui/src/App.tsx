@@ -291,6 +291,7 @@ export function App() {
               comments={commentsApi}
               existing={existingLookup}
               architect={architectApi}
+              reactionsSupported={payload.reactionsSupported}
               reviewed={reviewed.has(active)}
               onToggleReviewed={() => toggleReviewed(active)}
             />

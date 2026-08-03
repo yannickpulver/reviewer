@@ -17,8 +17,17 @@ export interface ReviewPayload {
   existingComments: ExistingComment[];
   /** Whether the diff covers the whole PR/MR or just the changes since the reviewer's last review. */
   diffScope: DiffScope;
+  /** Whether the host supports POST /api/react. */
+  reactionsSupported: boolean;
   /** True when the architect review was started alongside grouping (--architect). */
   architectStarted?: boolean;
+}
+
+/** Body of POST /api/react. */
+export interface ReactBody {
+  commentId: string;
+  content: string;
+  remove: boolean;
 }
 
 /** Body of POST /api/review. */

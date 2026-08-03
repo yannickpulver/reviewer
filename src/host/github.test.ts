@@ -40,6 +40,96 @@ describe("GitHubHost on Enterprise", () => {
     expect(api.some((a) => a.startsWith("acme.ghe.com/"))).toBe(false);
   });
 
+  it("parses comment ids and reactions from reviewThreads", async () => {
+    const { run } = recorder({
+      "pr view": JSON.stringify({
+        number: 7, title: "t", author: { login: "a" }, url: "u",
+        baseRefName: "main", headRefName: "f", headRefOid: "sha",
+        state: "OPEN", isDraft: false,
+      }),
+      graphql: JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: [
+                  {
+                    isResolved: false,
+                    comments: {
+                      nodes: [
+                        {
+                          id: "C_1",
+                          path: "a.ts",
+                          line: 3,
+                          originalLine: null,
+                          author: { login: "bob" },
+                          body: "nit",
+                          reactionGroups: [
+                            { content: "THUMBS_UP", viewerHasReacted: true, reactions: { totalCount: 2 } },
+                            { content: "EYES", viewerHasReacted: false, reactions: { totalCount: 0 } },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    });
+    const host = new GitHubHost(7, "org/repo", run);
+    const { comments } = await host.fetch();
+    expect(comments).toEqual([
+      {
+        id: "C_1",
+        path: "a.ts",
+        line: 3,
+        author: "bob",
+        body: "nit",
+        resolved: false,
+        reactions: [{ content: "+1", count: 2, viewerReacted: true }],
+      },
+    ]);
+  });
+
+  it("toggleReaction runs add/remove mutations and returns fresh reactions", async () => {
+    const { run, calls } = recorder({
+      graphql: JSON.stringify({
+        data: {
+          addReaction: {
+            subject: {
+              reactionGroups: [
+                { content: "ROCKET", viewerHasReacted: true, reactions: { totalCount: 1 } },
+              ],
+            },
+          },
+        },
+      }),
+    });
+    const host = new GitHubHost(7, "acme.ghe.com/org/repo", run);
+    const reactions = await host.toggleReaction("C_1", "rocket", false);
+    expect(reactions).toEqual([{ content: "rocket", count: 1, viewerReacted: true }]);
+
+    const call = calls[0]!;
+    expect(call).toContain("--hostname");
+    expect(call).toContain("id=C_1");
+    expect(call).toContain("content=ROCKET");
+    expect(call.some((a) => a.includes("addReaction"))).toBe(true);
+  });
+
+  it("toggleReaction uses removeReaction when removing", async () => {
+    const { run, calls } = recorder({
+      graphql: JSON.stringify({ data: { removeReaction: { subject: { reactionGroups: [] } } } }),
+    });
+    const host = new GitHubHost(7, "org/repo", run);
+    expect(await host.toggleReaction("C_1", "+1", true)).toEqual([]);
+    const call = calls[0]!;
+    expect(call.some((a) => a.includes("removeReaction"))).toBe(true);
+    expect(call).toContain("content=THUMBS_UP");
+  });
+
   it("omits --hostname for public github.com", async () => {
     const { run, calls } = recorder({
       "pr view": JSON.stringify({ headRefOid: "x" }),

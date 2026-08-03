@@ -7,7 +7,13 @@ import type { Host } from "../host/types.js";
 import { architectReview, type ArchitectReview } from "../review/architect.js";
 import { askClaude, type AskInput } from "./ask.js";
 import { findUiDist } from "./paths.js";
-import type { BuildingState, ReviewApiResponse, ReviewPayload, SubmitBody } from "./payload.js";
+import type {
+  BuildingState,
+  ReactBody,
+  ReviewApiResponse,
+  ReviewPayload,
+  SubmitBody,
+} from "./payload.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -79,6 +85,21 @@ export function startServer(
       const action = body.action ?? "comment";
       const result = await host.postReview(body.comments, body.summary ?? "", action);
       return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
+
+  app.post("/api/react", async (c) => {
+    if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
+    if (!host.toggleReaction) return c.json({ error: "Reactions not supported" }, 501);
+    const body = (await c.req.json()) as Partial<ReactBody>;
+    if (typeof body.commentId !== "string" || typeof body.content !== "string") {
+      return c.json({ error: "commentId and content are required" }, 400);
+    }
+    try {
+      const reactions = await host.toggleReaction(body.commentId, body.content, !!body.remove);
+      return c.json({ reactions });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 502);
     }
