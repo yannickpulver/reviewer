@@ -6,6 +6,7 @@ import type {
   Host,
   PullMeta,
   PullState,
+  Reaction,
   ReviewAction,
   ReviewComment,
 } from "./types.js";
@@ -15,6 +16,40 @@ const GH_EVENT: Record<ReviewAction, string> = {
   approve: "APPROVE",
   request_changes: "REQUEST_CHANGES",
 };
+
+/** GraphQL ReactionContent enum ↔ the REST-style content keys used across the app. */
+const GQL_REACTION: Record<string, string> = {
+  THUMBS_UP: "+1",
+  THUMBS_DOWN: "-1",
+  LAUGH: "laugh",
+  HOORAY: "hooray",
+  CONFUSED: "confused",
+  HEART: "heart",
+  ROCKET: "rocket",
+  EYES: "eyes",
+};
+
+const REACTION_GQL: Record<string, string> = Object.fromEntries(
+  Object.entries(GQL_REACTION).map(([k, v]) => [v, k]),
+);
+
+const REACTION_GROUPS_SELECTION = "reactionGroups{ content viewerHasReacted reactions{ totalCount } }";
+
+interface GqlReactionGroup {
+  content: string;
+  viewerHasReacted: boolean;
+  reactions: { totalCount: number };
+}
+
+function toReactions(groups: GqlReactionGroup[] | null | undefined): Reaction[] {
+  return (groups ?? [])
+    .filter((g) => g.reactions.totalCount > 0)
+    .map((g) => ({
+      content: GQL_REACTION[g.content] ?? g.content.toLowerCase(),
+      count: g.reactions.totalCount,
+      viewerReacted: g.viewerHasReacted,
+    }));
+}
 
 /** Map gh's state (OPEN/CLOSED/MERGED) + draft flag to a normalized state. */
 function ghState(v: { state: string; isDraft: boolean }): PullState {
@@ -152,7 +187,7 @@ export class GitHubHost implements Host {
               nodes{
                 isResolved
                 comments(first:100){
-                  nodes{ path line originalLine author{login} body }
+                  nodes{ id path line originalLine author{login} body ${REACTION_GROUPS_SELECTION} }
                 }
               }
             }
@@ -176,11 +211,13 @@ export class GitHubHost implements Host {
                   isResolved: boolean;
                   comments: {
                     nodes: Array<{
+                      id: string;
                       path: string;
                       line: number | null;
                       originalLine: number | null;
                       author: { login: string } | null;
                       body: string;
+                      reactionGroups: GqlReactionGroup[] | null;
                     }>;
                   };
                 }>;
@@ -196,11 +233,13 @@ export class GitHubHost implements Host {
           const line = c.line ?? c.originalLine ?? 0;
           if (line <= 0) continue;
           out.push({
+            id: c.id,
             path: c.path,
             line,
             author: c.author?.login ?? "unknown",
             body: c.body,
             resolved: t.isResolved,
+            reactions: toReactions(c.reactionGroups),
           });
         }
       }
@@ -208,6 +247,28 @@ export class GitHubHost implements Host {
     } catch {
       return []; // comments are best-effort; never block the review
     }
+  }
+
+  async toggleReaction(commentId: string, content: string, remove: boolean): Promise<Reaction[]> {
+    const gql = REACTION_GQL[content];
+    if (!gql) throw new Error(`Unsupported reaction: ${content}`);
+    const field = remove ? "removeReaction" : "addReaction";
+    const query = `
+      mutation($id:ID!,$content:ReactionContent!){
+        ${field}(input:{subjectId:$id,content:$content}){
+          subject{ ... on PullRequestReviewComment { ${REACTION_GROUPS_SELECTION} } }
+        }
+      }`;
+    const res = await this.run("gh", [
+      "api", ...this.hostArgs(), "graphql",
+      "-f", `query=${query}`,
+      "-F", `id=${commentId}`,
+      "-f", `content=${gql}`,
+    ]);
+    const parsed = JSON.parse(res.stdout) as {
+      data?: Record<string, { subject?: { reactionGroups?: GqlReactionGroup[] | null } | null } | undefined>;
+    };
+    return toReactions(parsed.data?.[field]?.subject?.reactionGroups);
   }
 
   async postReview(

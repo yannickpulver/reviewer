@@ -14,6 +14,7 @@ interface Props {
   comments: CommentsApi;
   existing: ExistingLookup;
   architect: ArchitectApi;
+  reactionsSupported: boolean;
   reviewed: boolean;
   onToggleReviewed: () => void;
 }
@@ -25,6 +26,7 @@ export function SectionContent({
   comments,
   existing,
   architect,
+  reactionsSupported,
   reviewed,
   onToggleReviewed,
 }: Props) {
@@ -77,6 +79,7 @@ export function SectionContent({
               comments={comments}
               existing={existing}
               architect={architect}
+              reactionsSupported={reactionsSupported}
             />
           </div>
         );

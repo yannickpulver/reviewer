@@ -237,7 +237,15 @@ async function runPipeline(
   }
 
   server.setPayload(
-    { meta, files: diff.files, grouping, existingComments, diffScope, architectStarted: args.architect },
+    {
+      meta,
+      files: diff.files,
+      grouping,
+      existingComments,
+      diffScope,
+      reactionsSupported: !!host.toggleReaction,
+      architectStarted: args.architect,
+    },
     diffText,
   );
 }

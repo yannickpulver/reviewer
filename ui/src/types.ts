@@ -72,6 +72,7 @@ export interface ReviewPayload {
   grouping: Grouping;
   existingComments: ExistingComment[];
   diffScope: DiffScope;
+  reactionsSupported: boolean;
   architectStarted?: boolean;
 }
 
@@ -103,12 +104,20 @@ export interface ReviewComment {
 
 export type ReviewAction = "comment" | "approve" | "request_changes";
 
+export interface Reaction {
+  content: string;
+  count: number;
+  viewerReacted: boolean;
+}
+
 export interface ExistingComment {
+  id: string;
   path: string;
   line: number;
   author: string;
   body: string;
   resolved: boolean;
+  reactions: Reaction[];
 }
 
 /** A resolved hunk with its owning file path, keyed by "path:Hn". */
