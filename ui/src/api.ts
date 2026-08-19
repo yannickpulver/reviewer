@@ -1,6 +1,7 @@
 import type {
   ArchitectReview,
   Reaction,
+  RefreshResponse,
   ReviewAction,
   ReviewApiResponse,
   ReviewComment,
@@ -24,6 +25,13 @@ export async function submitReview(
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? `Submit failed (${res.status})`);
+  return data;
+}
+
+export async function refreshReview(): Promise<RefreshResponse> {
+  const res = await fetch("/api/refresh", { method: "POST" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `Refresh failed (${res.status})`);
   return data;
 }
 

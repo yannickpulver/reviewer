@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Circle, ExternalLink, Loader2 } from "lucide-react";
 import type { BuildingState, BuildStep, Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
-import { getReview, runArchitectReview, submitReview } from "./api";
-import { indexHunks, lineKey } from "./lib/diff";
+import { getReview, refreshReview, runArchitectReview, submitReview } from "./api";
+import { indexHunks, lineKey, remapDrafts } from "./lib/diff";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,11 +24,18 @@ export function App() {
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [detached, setDetached] = useState<ReviewComment[]>([]);
+
   const [architect, setArchitect] = useState<ArchitectState>({ status: "idle" });
   const [adoptedFindings, setAdoptedFindings] = useState<Set<number>>(new Set());
   const [dismissedFindings, setDismissedFindings] = useState<Set<number>>(new Set());
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The "r" shortcut binds once; route it through a ref so it always calls the
+  // current closure rather than the one from first render.
+  const doRefreshRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +77,22 @@ export function App() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
   }, [active]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "r" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest("input, textarea, [contenteditable=true]")) return;
+      e.preventDefault();
+      doRefreshRef.current?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    doRefreshRef.current = doRefresh;
+  });
 
   const commentsApi: CommentsApi = useMemo(
     () => ({
@@ -144,11 +167,12 @@ export function App() {
     [findingsByLine],
   );
 
-  async function runArchitect(force = false) {
+  async function runArchitect(force = false, keepDecisions = false) {
     setArchitect({ status: "loading" });
     try {
       const review = await runArchitectReview(force);
       setArchitect({ status: "done", review });
+      if (keepDecisions) return; // refresh re-anchors findings in place, order unchanged
       setAdoptedFindings(new Set());
       setDismissedFindings(new Set());
     } catch (e) {
@@ -156,20 +180,43 @@ export function App() {
     }
   }
 
-  const sections: Group[] = useMemo(() => {
-    if (!payload) return [];
-    const list = [...payload.grouping.groups];
-    if (payload.grouping.ungrouped.length > 0) {
-      list.push({
-        title: "Ungrouped",
-        importance: "low",
-        summary: "Changes not assigned to a group.",
-        hunks: payload.grouping.ungrouped,
-        flags: [],
-      });
+  const sections: Group[] = useMemo(() => (payload ? sectionsOf(payload) : []), [payload]);
+
+  /**
+   * Pull the diff again (local worktree when it is this branch, host otherwise)
+   * and move the review onto it: sections keep their reviewed state by title,
+   * drafts follow their lines, architect findings re-anchor server-side.
+   */
+  async function doRefresh() {
+    if (!payload || refreshing) return;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const { payload: next, lineMap } = await refreshReview();
+      const nextSections = sectionsOf(next);
+
+      const reviewedTitles = new Set(
+        [...reviewed].map((i) => sections[i]?.title).filter(Boolean),
+      );
+      setReviewed(
+        new Set(nextSections.flatMap((s, i) => (reviewedTitles.has(s.title) ? [i] : []))),
+      );
+      const activeTitle = sections[active]?.title;
+      const nextActive = nextSections.findIndex((s) => s.title === activeTitle);
+      setActive(nextActive >= 0 ? nextActive : 0);
+
+      const { moved, detached: lost } = remapDrafts(comments, lineMap);
+      setComments(moved);
+      if (lost.length > 0) setDetached((prev) => [...prev, ...lost]);
+
+      setPayload(next);
+      if (architect.status === "done") runArchitect(false, true);
+    } catch (e) {
+      setRefreshError((e as Error).message);
+    } finally {
+      setRefreshing(false);
     }
-    return list;
-  }, [payload]);
+  }
 
   const commentList = Object.values(comments);
 
@@ -252,6 +299,10 @@ export function App() {
   }
 
   const current = sections[active];
+  // A local refresh shows commits the host doesn't have yet, so inline comments
+  // would anchor to lines that don't exist at meta.headSha.
+  const unpushed =
+    payload.refresh?.source === "local" ? payload.refresh.ahead : 0;
 
   const toggleReviewed = (i: number) => {
     const willReview = !reviewed.has(i);
@@ -279,6 +330,10 @@ export function App() {
         onRunArchitectReview={runArchitect}
         liveFindings={liveFindings}
         onSelectFinding={selectFinding}
+        refresh={payload.refresh}
+        refreshing={refreshing}
+        refreshError={refreshError}
+        onRefresh={doRefresh}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -305,6 +360,8 @@ export function App() {
         ) : (
           <SubmitBar
             count={commentList.length}
+            detached={detached.length}
+            unpushed={unpushed}
             onSubmit={() => setConfirming(true)}
             submitted={submitted}
           />
@@ -330,10 +387,14 @@ export function App() {
 
 function SubmitBar({
   count,
+  detached,
+  unpushed,
   onSubmit,
   submitted,
 }: {
   count: number;
+  detached: number;
+  unpushed: number;
   onSubmit: () => void;
   submitted: string | null;
 }) {
@@ -354,8 +415,19 @@ function SubmitBar({
           <>
             <span className="text-sm text-muted-foreground">
               {count} pending comment{count === 1 ? "" : "s"}
+              {detached > 0 && (
+                <span className="text-amber-600">
+                  {" "}
+                  · {detached} lost its line after a refresh
+                </span>
+              )}
             </span>
-            <Button className="ml-auto" onClick={onSubmit}>
+            {unpushed > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {unpushed} unpushed commit{unpushed === 1 ? "" : "s"} — push to submit
+              </span>
+            )}
+            <Button className="ml-auto" onClick={onSubmit} disabled={unpushed > 0}>
               Submit review
             </Button>
           </>
@@ -498,6 +570,21 @@ function BuildingPanel({ state }: { state: BuildingState }) {
       </div>
     </Centered>
   );
+}
+
+/** Sidebar sections: the groups, plus a trailing catch-all for ungrouped hunks. */
+function sectionsOf(payload: ReviewPayload): Group[] {
+  const list = [...payload.grouping.groups];
+  if (payload.grouping.ungrouped.length > 0) {
+    list.push({
+      title: "Ungrouped",
+      importance: "low",
+      summary: "Changes not assigned to a group.",
+      hunks: payload.grouping.ungrouped,
+      flags: [],
+    });
+  }
+  return list;
 }
 
 function Centered({ children }: { children: React.ReactNode }) {

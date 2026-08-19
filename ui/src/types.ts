@@ -74,6 +74,32 @@ export interface ReviewPayload {
   diffScope: DiffScope;
   reactionsSupported: boolean;
   architectStarted?: boolean;
+  /** Bumped on every refresh; 0 for the original review. */
+  rev: number;
+  refresh?: RefreshSummary;
+}
+
+export type RefreshSource = "local" | "remote";
+
+export interface RefreshSummary {
+  source: RefreshSource;
+  /** Local commits not yet pushed — inline comments can't be posted while > 0. */
+  ahead: number;
+  hunksUnchanged: number;
+  hunksChanged: number;
+  hunksNew: number;
+  flagsDropped: number;
+  findingsStale: number;
+  existingDetached: number;
+}
+
+/** path → old new-side line → refreshed new-side line. */
+export type LineMap = Record<string, Record<number, number>>;
+
+export interface RefreshResponse {
+  payload: ReviewPayload;
+  lineMap: LineMap;
+  summary: RefreshSummary;
 }
 
 export type BuildStep = "fetching" | "grouping";
@@ -138,6 +164,8 @@ export interface ArchitectFinding {
   fix?: string;
   /** Whether path+line was validated against the parsed diff server-side */
   anchored: boolean;
+  /** Set on refresh when the line this pointed at is gone — usually because it's fixed. */
+  stale?: boolean;
 }
 
 export interface ArchitectReview {

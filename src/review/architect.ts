@@ -15,6 +15,8 @@ export interface ArchitectFinding {
   fix?: string;
   /** Set server-side once validated against the parsed diff */
   anchored: boolean;
+  /** Set on refresh when the line this pointed at is gone — usually because you fixed it. */
+  stale?: boolean;
 }
 
 export interface ArchitectReview {

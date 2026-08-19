@@ -20,6 +20,8 @@ reviewer 42
  ├─ parse the unified diff into a typed model
  ├─ claude -p  →  groups {title, importance, summary, hunks[]}  (chunked for big diffs)
  │   (the UI polls and shows live progress while this runs)
+ ├─ "Refresh"  →  re-diffs against your worktree (or the host) and carries
+ │   the review over: groups, comments and findings keep their place
  └─ "Submit review"  →  posts batched inline comments via gh / glab
 ```
 
@@ -72,6 +74,21 @@ comment icon to draft your own note. Click **Submit review** to post all comment
 once as a single review, choosing a verdict — **Comment**, **Approve**, or **Request
 changes** — with an optional overall summary.
 
+### Refreshing a review
+
+Fixed something while reviewing? Hit the refresh icon in the sidebar (or press
+`r`) instead of starting over. If the PR's branch is checked out, the diff is
+recomputed from your worktree, so **unpushed** changes show up immediately;
+otherwise it refetches from the host and picks up newly pushed commits.
+
+The existing review moves onto the new diff without another Claude call:
+unchanged hunks keep their group, changed ones stay in the group their file was
+already in, anything from a file that wasn't under review lands in a **Local
+changes** group. Drafted comments follow their lines, and architect findings
+whose line is gone are struck through as *may be fixed* rather than dropped.
+Inline comments can't be submitted while the diff includes unpushed commits —
+push first, then refresh.
+
 ## Development
 
 ```bash
@@ -90,6 +107,7 @@ pnpm --dir ui dev   # terminal 2 — Vite dev server, proxies /api to the CLI
 | `diff/`   | parse a unified diff into a typed `File/Hunk/Line` model (pure)  |
 | `host/`   | detect github/gitlab; fetch diff + metadata; post the review     |
 | `group/`  | build the prompt, call `claude -p`, validate, chunk + merge      |
+| `refresh/`| re-diff against the worktree; carry groups/comments/findings over |
 | `server/` | Hono server: `GET/POST /api/review`, serve the built UI          |
 | `ui/`     | React + Tailwind + shadcn review interface                       |
 

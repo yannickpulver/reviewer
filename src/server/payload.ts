@@ -7,6 +7,8 @@ import type {
   ReviewAction,
   ReviewComment,
 } from "../host/types.js";
+import type { RefreshSource } from "../refresh/localDiff.js";
+import type { LineMap } from "../refresh/remap.js";
 
 /** Everything the UI needs to render a review. Sent by GET /api/review. */
 export interface ReviewPayload {
@@ -21,6 +23,35 @@ export interface ReviewPayload {
   reactionsSupported: boolean;
   /** True when the architect review was started alongside grouping (--architect). */
   architectStarted?: boolean;
+  /** Bumped on every refresh; 0 for the original review. */
+  rev: number;
+  /** Result of the most recent refresh, if any. */
+  refresh?: RefreshSummary;
+}
+
+/** What a refresh changed, relative to the review it replaced. */
+export interface RefreshSummary {
+  /** Whether the refreshed diff came from the local worktree or the host. */
+  source: RefreshSource;
+  /** Local commits not yet in the PR/MR head — inline comments can't be posted while > 0. */
+  ahead: number;
+  hunksUnchanged: number;
+  hunksChanged: number;
+  hunksNew: number;
+  /** Grouping flags dropped because their hunk changed. */
+  flagsDropped: number;
+  /** Architect findings whose line is gone — likely fixed. */
+  findingsStale: number;
+  /** Existing PR/MR comments that no longer anchor to a diff line. */
+  existingDetached: number;
+}
+
+/** Response of POST /api/refresh. */
+export interface RefreshResponse {
+  payload: ReviewPayload;
+  /** Lets the UI move its drafted comments onto the refreshed diff. */
+  lineMap: LineMap;
+  summary: RefreshSummary;
 }
 
 /** Body of POST /api/react. */

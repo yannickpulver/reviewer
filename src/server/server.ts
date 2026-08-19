@@ -2,14 +2,20 @@ import { readFile } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { parseUnifiedDiff } from "../diff/parse.js";
 import type { DiffFile } from "../diff/types.js";
 import type { Host } from "../host/types.js";
+import { refreshDiff } from "../refresh/localDiff.js";
+import { buildLineMap, carryGrouping, remapExisting, remapFindings } from "../refresh/remap.js";
 import { architectReview, type ArchitectReview } from "../review/architect.js";
 import { askClaude, type AskInput } from "./ask.js";
 import { findUiDist } from "./paths.js";
 import type {
   BuildingState,
   ReactBody,
+  ReadyState,
+  RefreshResponse,
+  RefreshSummary,
   ReviewApiResponse,
   ReviewPayload,
   SubmitBody,
@@ -38,7 +44,7 @@ export interface ReviewOptions {
 export interface ServerHandle extends RunningServer {
   setProgress: (update: Omit<BuildingState, "status">) => void;
   /** Marks the review ready; `diffText` is stashed for the architect review. */
-  setPayload: (payload: ReviewPayload, diffText: string) => void;
+  setPayload: (payload: Omit<ReviewPayload, "rev">, diffText: string) => void;
   setError: (message: string) => void;
   /** Kick off the architect review early (e.g. in parallel with grouping). */
   startArchitect: (diffText: string, files: DiffFile[]) => void;
@@ -64,14 +70,72 @@ export function startServer(
   // Cache the architect review in memory (a promise, so concurrent clicks dedupe);
   // `?force=1` clears it and reruns.
   let architectPromise: Promise<ArchitectReview> | null = null;
+  // The settled review, kept so a refresh can re-anchor its findings in place.
+  let architectResult: ArchitectReview | null = null;
+  let refreshing: Promise<RefreshResponse> | null = null;
 
   const launchArchitect = (dt: string, files: DiffFile[]) => {
-    architectPromise = architectReview(dt, files, reviewOptions.model).catch((err) => {
-      architectPromise = null; // don't cache failures — let the next click retry
-      throw err;
-    });
+    architectPromise = architectReview(dt, files, reviewOptions.model)
+      .then((review) => {
+        architectResult = review;
+        return review;
+      })
+      .catch((err) => {
+        architectPromise = null; // don't cache failures — let the next click retry
+        throw err;
+      });
     return architectPromise;
   };
+
+  /**
+   * Re-fetch the diff and carry the current review onto it: groups, flags,
+   * existing comments and architect findings all move to their new positions
+   * instead of being recomputed. No Claude call.
+   */
+  async function doRefresh(prev: ReadyState): Promise<RefreshResponse> {
+    const refreshed = await refreshDiff(host, prev.meta);
+    const diff = parseUnifiedDiff(refreshed.diffText);
+    const lineMap = buildLineMap(prev.files, diff.files);
+    const freshTitle = refreshed.source === "local" ? "Local changes" : "New commits";
+    const carried = carryGrouping(prev.grouping, prev.files, diff.files, freshTitle);
+    // The remote path refetches comments; the local one re-anchors what we have.
+    const existing = refreshed.comments
+      ? { comments: refreshed.comments, detached: 0 }
+      : remapExisting(prev.existingComments, lineMap);
+
+    let findingsStale = 0;
+    if (architectResult) {
+      const remapped = remapFindings(architectResult.findings, lineMap, diff.files);
+      findingsStale = remapped.stale;
+      architectResult = { ...architectResult, findings: remapped.findings };
+      architectPromise = Promise.resolve(architectResult);
+    }
+
+    const summary: RefreshSummary = {
+      source: refreshed.source,
+      ahead: refreshed.ahead,
+      hunksUnchanged: carried.hunksUnchanged,
+      hunksChanged: carried.hunksChanged,
+      hunksNew: carried.hunksNew,
+      flagsDropped: carried.flagsDropped,
+      findingsStale,
+      existingDetached: existing.detached,
+    };
+
+    const { status: _status, ...rest } = prev;
+    const payload: ReviewPayload = {
+      ...rest,
+      files: diff.files,
+      grouping: carried.grouping,
+      existingComments: existing.comments,
+      rev: prev.rev + 1,
+      refresh: summary,
+    };
+
+    diffText = refreshed.diffText;
+    state = { status: "ready", ...payload };
+    return { payload, lineMap, summary };
+  }
 
   app.get("/api/review", (c) => c.json(state));
 
@@ -137,6 +201,19 @@ export function startServer(
     }
   });
 
+  app.post("/api/refresh", async (c) => {
+    if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
+    // Concurrent clicks share one run — refreshing twice would fight over `state`.
+    refreshing ??= doRefresh(state).finally(() => {
+      refreshing = null;
+    });
+    try {
+      return c.json(await refreshing);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
+
   app.get("/*", async (c) => {
     const res = await serveAsset(uiDist, c.req.path);
     if (!res) return c.notFound();
@@ -159,7 +236,7 @@ export function startServer(
           },
           setPayload: (payload, dt) => {
             diffText = dt;
-            state = { status: "ready", ...payload };
+            state = { status: "ready", rev: 0, ...payload };
           },
           setError: (message) => {
             state = { status: "error", message };

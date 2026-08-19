@@ -4,10 +4,18 @@ import {
   History,
   Loader2,
   MessageSquare,
+  RefreshCw,
   RotateCw,
   Sparkles,
 } from "lucide-react";
-import type { ArchitectReview, DiffScope, Group, PullMeta, PullState } from "@/types";
+import type {
+  ArchitectReview,
+  DiffScope,
+  Group,
+  PullMeta,
+  PullState,
+  RefreshSummary,
+} from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -40,6 +48,11 @@ interface Props {
   onRunArchitectReview: (force?: boolean) => void;
   liveFindings: ArchitectFindingView[];
   onSelectFinding: (finding: ArchitectFindingView) => void;
+  /** Result of the last refresh, or undefined before the first one. */
+  refresh?: RefreshSummary;
+  refreshing: boolean;
+  refreshError: string | null;
+  onRefresh: () => void;
 }
 
 export function Sidebar({
@@ -55,6 +68,10 @@ export function Sidebar({
   onRunArchitectReview,
   liveFindings,
   onSelectFinding,
+  refresh,
+  refreshing,
+  refreshError,
+  onRefresh,
 }: Props) {
   return (
     <aside className="flex h-screen w-80 shrink-0 flex-col border-r bg-card">
@@ -73,6 +90,15 @@ export function Sidebar({
           <Badge className={cn("ml-auto capitalize", STATE_STYLES[meta.state])}>
             {meta.host === "local" ? "branch" : meta.state}
           </Badge>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            title="Pull in changes made since this review started (r)"
+            className="-mr-1 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+          >
+            <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
+          </button>
         </div>
         <h1 className="text-sm font-semibold leading-snug">{meta.title}</h1>
         <p className="font-mono text-xs text-muted-foreground">
@@ -82,6 +108,11 @@ export function Sidebar({
           <p className="flex items-center gap-1 text-xs text-muted-foreground">
             <History className="size-3" /> since your last review
           </p>
+        )}
+        {refreshError ? (
+          <p className="text-xs text-red-600">{refreshError}</p>
+        ) : (
+          refresh && <p className="text-xs text-muted-foreground">{describeRefresh(refresh)}</p>
         )}
       </div>
 
@@ -149,6 +180,22 @@ export function Sidebar({
   );
 }
 
+/** One line summarising what the last refresh brought in. */
+function describeRefresh(r: RefreshSummary): string {
+  const parts: string[] = [
+    r.source === "local"
+      ? r.ahead > 0
+        ? `local worktree, ${r.ahead} unpushed commit${r.ahead === 1 ? "" : "s"}`
+        : "local worktree"
+      : "from host",
+  ];
+  if (r.hunksChanged > 0) parts.push(`${r.hunksChanged} hunk${r.hunksChanged === 1 ? "" : "s"} updated`);
+  if (r.hunksNew > 0) parts.push(`${r.hunksNew} new`);
+  if (r.findingsStale > 0) parts.push(`${r.findingsStale} finding${r.findingsStale === 1 ? "" : "s"} likely fixed`);
+  if (r.hunksChanged === 0 && r.hunksNew === 0) parts.push("no changes");
+  return parts.join(" · ");
+}
+
 function FindingRow({
   finding,
   onClick,
@@ -180,9 +227,13 @@ function FindingRow({
           {finding.path}:{finding.line}
         </span>
       </div>
-      <p className="line-clamp-2 text-foreground/90">{finding.comment}</p>
-      {!finding.anchored && (
-        <p className="text-[10px] text-muted-foreground">not in diff</p>
+      <p className={cn("line-clamp-2 text-foreground/90", finding.stale && "line-through")}>
+        {finding.comment}
+      </p>
+      {finding.stale ? (
+        <p className="text-[10px] text-emerald-700">code changed — may be fixed</p>
+      ) : (
+        !finding.anchored && <p className="text-[10px] text-muted-foreground">not in diff</p>
       )}
     </button>
   );
