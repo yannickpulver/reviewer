@@ -96,12 +96,21 @@ function printPullList(pulls: PullSummary[]) {
     const n = String(i + 1).padStart(width);
     const draft = p.state === "draft" ? " (draft)" : "";
     const age = `\x1b[2m· waiting ${formatAge(p.createdAt)}\x1b[0m`;
-    console.error(`  ${n}. #${p.id}  ${p.title}${draft}  — ${p.author}  ${age}`);
+    const size = formatDiffSize(p);
+    console.error(`  ${n}. #${p.id}  ${p.title}${draft}  — ${p.author}${size}  ${age}`);
   }
   console.error(
     `\n  ${String(localChoice).padStart(width)}. Review the current local branch (no PR/MR)`,
   );
   console.error("");
+}
+
+/** Green/red line counts for the picker, or "" when the host didn't report them. */
+function formatDiffSize(p: PullSummary): string {
+  if (p.additions === undefined && p.deletions === undefined) return "";
+  const added = `\x1b[32m+${p.additions ?? 0}\x1b[0m`;
+  const removed = `\x1b[31m-${p.deletions ?? 0}\x1b[0m`;
+  return `  ${added} ${removed}`;
 }
 
 async function promptChoice(

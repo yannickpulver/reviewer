@@ -19,6 +19,10 @@ export interface PullSummary {
   assignedToMe: boolean;
   /** ISO creation timestamp. */
   createdAt: string;
+  /** Lines added in the PR/MR, or undefined when the host didn't report it. */
+  additions?: number;
+  /** Lines removed in the PR/MR, or undefined when the host didn't report it. */
+  deletions?: number;
 }
 
 /** Resolve a Host implementation from a CLI argument (PR/MR number or URL). */
@@ -125,7 +129,7 @@ async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]
   const [res, me] = await Promise.all([
     run("gh", [
       "pr", "list", "--repo", repo, "--state", "open",
-      "--json", "number,title,author,isDraft,reviewRequests,assignees,createdAt",
+      "--json", "number,title,author,isDraft,reviewRequests,assignees,createdAt,additions,deletions",
     ]),
     currentLogin("gh", userArgs, run),
   ]);
@@ -137,6 +141,8 @@ async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]
     reviewRequests: Array<{ login?: string }> | null;
     assignees: Array<{ login?: string }> | null;
     createdAt: string;
+    additions?: number;
+    deletions?: number;
   }>;
   return raw.map((p) => ({
     id: p.number,
@@ -146,16 +152,19 @@ async function listGitHubPulls(repo: string, run: Runner): Promise<PullSummary[]
     reviewRequestedFromMe: !!me && (p.reviewRequests ?? []).some((r) => r.login === me),
     assignedToMe: !!me && (p.assignees ?? []).some((a) => a.login === me),
     createdAt: p.createdAt,
+    additions: p.additions,
+    deletions: p.deletions,
   }));
 }
 
 async function listGitLabPulls(repo: string, run: Runner): Promise<PullSummary[]> {
-  const [res, me] = await Promise.all([
+  const [res, me, stats] = await Promise.all([
     run("glab", [
       "api",
       `projects/${encodeURIComponent(repo)}/merge_requests?state=opened&per_page=100`,
     ]),
     currentLogin("glab", ["api", "user"], run, (s) => JSON.parse(s).username),
+    gitLabDiffStats(repo, run),
   ]);
   const raw = JSON.parse(res.stdout) as Array<{
     iid: number;
@@ -175,7 +184,52 @@ async function listGitLabPulls(repo: string, run: Runner): Promise<PullSummary[]
     reviewRequestedFromMe: !!me && (m.reviewers ?? []).some((r) => r.username === me),
     assignedToMe: !!me && (m.assignees ?? []).some((a) => a.username === me),
     createdAt: m.created_at,
+    ...(stats.get(m.iid) ?? {}),
   }));
+}
+
+/**
+ * Per-MR line counts, keyed by iid. The REST list endpoint omits diff stats, so
+ * they come from GraphQL; failures degrade to no counts rather than no listing.
+ */
+async function gitLabDiffStats(
+  repo: string,
+  run: Runner,
+): Promise<Map<number, { additions: number; deletions: number }>> {
+  const query = `query($p:ID!){
+    project(fullPath:$p){
+      mergeRequests(state:opened,first:100){
+        nodes{ iid diffStatsSummary{ additions deletions } }
+      }
+    }
+  }`;
+  const stats = new Map<number, { additions: number; deletions: number }>();
+  try {
+    const res = await run("glab", ["api", "graphql", "-f", `query=${query}`, "-f", `p=${repo}`]);
+    const parsed = JSON.parse(res.stdout) as {
+      data?: {
+        project?: {
+          mergeRequests?: {
+            nodes: Array<{
+              iid: string;
+              diffStatsSummary?: { additions: number; deletions: number } | null;
+            }>;
+          };
+        };
+      };
+    };
+    for (const n of parsed.data?.project?.mergeRequests?.nodes ?? []) {
+      if (n.diffStatsSummary) {
+        stats.set(Number(n.iid), {
+          additions: n.diffStatsSummary.additions,
+          deletions: n.diffStatsSummary.deletions,
+        });
+      }
+    }
+  } catch {
+    // Older GitLab or a GraphQL hiccup: show the list without line counts.
+  }
+  return stats;
 }
 
 /** Resolve the authenticated user's login; returns "" if unavailable. */
