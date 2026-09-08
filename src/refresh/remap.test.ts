@@ -57,14 +57,12 @@ const GROUPING: Grouping = {
       importance: "high",
       summary: "",
       hunks: ["src/a.ts:H0"],
-      flags: [{ hunk: "src/a.ts:H0", severity: "danger", note: "risky() can throw" }],
     },
     {
       title: "Untouched",
       importance: "low",
       summary: "",
       hunks: ["src/kept.ts:H0"],
-      flags: [{ hunk: "src/kept.ts:H0", severity: "warning", note: "check this" }],
     },
   ],
   ungrouped: [],
@@ -100,21 +98,17 @@ describe("carryGrouping", () => {
     expect(carried.hunksNew).toBe(1);
   });
 
-  it("carries unchanged hunks with their flags, and drops flags on changed ones", () => {
+  it("carries unchanged hunks into the group they were in", () => {
     const untouched = carried.grouping.groups.find((g) => g.title === "Untouched")!;
-    expect(untouched.flags).toHaveLength(1);
+    expect(untouched.hunks).toEqual(["src/kept.ts:H0"]);
     expect(carried.hunksUnchanged).toBe(1);
-
-    const risky = carried.grouping.groups.find((g) => g.title === "Risky bit")!;
-    expect(risky.flags).toEqual([]);
-    expect(carried.flagsDropped).toBe(1);
   });
 
   it("drops groups whose hunks all disappeared", () => {
     const gone: Grouping = {
       groups: [
         ...GROUPING.groups,
-        { title: "Deleted file", importance: "low", summary: "", hunks: ["src/old.ts:H0"], flags: [] },
+        { title: "Deleted file", importance: "low", summary: "", hunks: ["src/old.ts:H0"] },
       ],
       ungrouped: [],
     };

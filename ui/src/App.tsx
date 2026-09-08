@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Circle, ExternalLink, Loader2 } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import type { BuildingState, BuildStep, Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
 import { getReview, refreshReview, runArchitectReview, submitReview } from "./api";
 import { indexHunks, lineKey, remapDrafts } from "./lib/diff";
@@ -22,6 +22,7 @@ export function App() {
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
+  const [verdict, setVerdict] = useState<ReviewAction | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [refreshing, setRefreshing] = useState(false);
@@ -36,11 +37,15 @@ export function App() {
   // The "r" shortcut binds once; route it through a ref so it always calls the
   // current closure rather than the one from first render.
   const doRefreshRef = useRef<(() => void) | null>(null);
+  // Same trick for the poll loop, which needs the current sections to move the
+  // reviewed/active markers onto a freshly grouped payload.
+  const applyPayloadRef = useRef<((next: ReviewPayload) => void) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     let failures = 0;
+    let started = false;
     const MAX_FAILURES = 5;
     async function poll() {
       try {
@@ -53,8 +58,13 @@ export function App() {
         } else if (data.status === "error") {
           setError(data.message);
         } else {
-          setPayload(data);
-          if (data.architectStarted) runArchitect();
+          applyPayloadRef.current?.(data);
+          if (!started) {
+            started = true;
+            if (data.architectStarted) runArchitect();
+          }
+          // The grouping arrives after the diff — keep polling until it lands.
+          if (data.groupingPending) timer = setTimeout(poll, 700);
         }
       } catch (e) {
         if (cancelled) return;
@@ -92,6 +102,7 @@ export function App() {
 
   useEffect(() => {
     doRefreshRef.current = doRefresh;
+    applyPayloadRef.current = applyPayload;
   });
 
   const commentsApi: CommentsApi = useMemo(
@@ -183,6 +194,23 @@ export function App() {
   const sections: Group[] = useMemo(() => (payload ? sectionsOf(payload) : []), [payload]);
 
   /**
+   * Adopt a new payload (Claude's grouping landing, or a refresh) while keeping
+   * the reviewed/active markers on the sections they belong to.
+   */
+  function applyPayload(next: ReviewPayload) {
+    if (!payload) {
+      setPayload(next);
+      return;
+    }
+    // Nothing new: same diff, still (or no longer) waiting on the same grouping.
+    if (next.rev === payload.rev && !next.groupingPending === !payload.groupingPending) return;
+    const marks = remapSections(sections, sectionsOf(next), reviewed, active);
+    setReviewed(marks.reviewed);
+    setActive(marks.active);
+    setPayload(next);
+  }
+
+  /**
    * Pull the diff again (local worktree when it is this branch, host otherwise)
    * and move the review onto it: sections keep their reviewed state by title,
    * drafts follow their lines, architect findings re-anchor server-side.
@@ -193,23 +221,12 @@ export function App() {
     setRefreshError(null);
     try {
       const { payload: next, lineMap } = await refreshReview();
-      const nextSections = sectionsOf(next);
-
-      const reviewedTitles = new Set(
-        [...reviewed].map((i) => sections[i]?.title).filter(Boolean),
-      );
-      setReviewed(
-        new Set(nextSections.flatMap((s, i) => (reviewedTitles.has(s.title) ? [i] : []))),
-      );
-      const activeTitle = sections[active]?.title;
-      const nextActive = nextSections.findIndex((s) => s.title === activeTitle);
-      setActive(nextActive >= 0 ? nextActive : 0);
 
       const { moved, detached: lost } = remapDrafts(comments, lineMap);
       setComments(moved);
       if (lost.length > 0) setDetached((prev) => [...prev, ...lost]);
 
-      setPayload(next);
+      applyPayload(next);
       if (architect.status === "done") runArchitect(false, true);
     } catch (e) {
       setRefreshError((e as Error).message);
@@ -279,6 +296,7 @@ export function App() {
     try {
       const { url } = await submitReview(commentList, summary, action);
       setSubmitted(url);
+      setVerdict(action);
       setConfirming(false);
     } catch (e) {
       setSubmitError((e as Error).message);
@@ -321,6 +339,8 @@ export function App() {
         meta={payload.meta}
         diffScope={payload.diffScope}
         sections={sections}
+        groupingPending={!!payload.groupingPending}
+        verdict={verdict}
         active={active}
         counts={counts}
         existingCounts={existingCounts}
@@ -530,46 +550,32 @@ function ConfirmDialog({
   );
 }
 
-const BUILD_STEPS: { key: BuildStep; label: string }[] = [
-  { key: "fetching", label: "Fetching diff" },
-  { key: "grouping", label: "Grouping with Claude" },
-];
+const BUILD_STEPS: Record<BuildStep, string> = {
+  fetching: "Fetching diff",
+};
 
 function BuildingPanel({ state }: { state: BuildingState }) {
-  const activeIndex = BUILD_STEPS.findIndex((s) => s.key === state.step);
   return (
     <Centered>
-      <div className="flex w-72 flex-col gap-2">
-        {BUILD_STEPS.map((s, i) => {
-          const done = i < activeIndex;
-          const current = i === activeIndex;
-          const showBatch = s.key === "grouping" && current && (state.batches ?? 0) > 1;
-          return (
-            <div
-              key={s.key}
-              className={cn(
-                "flex items-center gap-2 text-sm",
-                current ? "text-foreground" : "text-muted-foreground",
-                !done && !current && "opacity-50",
-              )}
-            >
-              {done ? (
-                <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
-              ) : current ? (
-                <Loader2 className="size-4 shrink-0 animate-spin" />
-              ) : (
-                <Circle className="size-4 shrink-0" />
-              )}
-              <span>
-                {s.label}
-                {showBatch ? ` (batch ${state.batch}/${state.batches})` : ""}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      <Loader2 className="size-4 animate-spin" />
+      <span className="text-sm">{BUILD_STEPS[state.step]}…</span>
     </Centered>
   );
+}
+
+/** Move the reviewed/active markers onto a new set of sections, matching by title. */
+function remapSections(
+  prev: Group[],
+  next: Group[],
+  reviewed: Set<number>,
+  active: number,
+): { reviewed: Set<number>; active: number } {
+  const reviewedTitles = new Set([...reviewed].map((i) => prev[i]?.title).filter(Boolean));
+  const nextActive = next.findIndex((s) => s.title === prev[active]?.title);
+  return {
+    reviewed: new Set(next.flatMap((s, i) => (reviewedTitles.has(s.title) ? [i] : []))),
+    active: nextActive >= 0 ? nextActive : 0,
+  };
 }
 
 /** Sidebar sections: the groups, plus a trailing catch-all for ungrouped hunks. */
@@ -581,7 +587,6 @@ function sectionsOf(payload: ReviewPayload): Group[] {
       importance: "low",
       summary: "Changes not assigned to a group.",
       hunks: payload.grouping.ungrouped,
-      flags: [],
     });
   }
   return list;

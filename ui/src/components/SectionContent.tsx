@@ -1,5 +1,5 @@
-import { AlertTriangle, Check, ExternalLink } from "lucide-react";
-import type { Flag, Group, PullMeta, ResolvedHunk } from "@/types";
+import { Check, ExternalLink } from "lucide-react";
+import type { Group, PullMeta, ResolvedHunk } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { blocksForRefs } from "@/lib/diff";
@@ -55,11 +55,8 @@ export function SectionContent({
 
       {blocks.map((block, i) => {
         const href = fileUrl(meta, block.path);
-        const blockRefs = new Set(block.hunks.map((h) => `${block.path}:${h.id}`));
-        const flags = section.flags.filter((f) => blockRefs.has(f.hunk));
         return (
           <div key={`${block.path}-${i}`} className="space-y-1">
-            {flags.length > 0 && <FlagCallout flags={flags} />}
             {href ? (
               <a
                 href={href}
@@ -84,33 +81,6 @@ export function SectionContent({
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function FlagCallout({ flags }: { flags: Flag[] }) {
-  const danger = flags.some((f) => f.severity === "danger");
-  return (
-    <div
-      className={cn(
-        "rounded-md border px-3 py-2 text-sm",
-        danger
-          ? "border-red-500/30 bg-red-500/10 text-red-800 dark:text-red-200"
-          : "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200",
-      )}
-    >
-      <div className="mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide">
-        <AlertTriangle className="size-3.5" />
-        Reviewer flag{flags.length > 1 ? "s" : ""}
-      </div>
-      <ul className="space-y-0.5">
-        {flags.map((f, i) => (
-          <li key={i} className="flex gap-1.5">
-            <span aria-hidden>{f.severity === "danger" ? "🔴" : "🟡"}</span>
-            <span>{f.note}</span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

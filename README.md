@@ -3,8 +3,9 @@
 A local CLI that makes code reviews easier to digest. It fetches a GitHub PR or
 GitLab MR diff, asks your **local Claude Code** instance to group related changes
 together (pushing chores, string tweaks, and lockfile noise out of the way), and
-serves an interactive review UI in your browser. You leave inline comments and
-submit them back as a single review.
+serves an interactive review UI in your browser. The diff is shown right away
+and the groups appear in the sidebar once Claude finishes. You leave inline
+comments and submit them back as a single review.
 
 Everything runs locally. The only network calls are the ones `gh`/`glab` already
 make on your behalf.
@@ -18,8 +19,9 @@ reviewer 42
  ├─ serve a local UI on a free 127.0.0.1 port + open the browser
  ├─ fetch diff + metadata via gh / glab
  ├─ parse the unified diff into a typed model
+ ├─ show the diff right away, all changes in one group
  ├─ claude -p  →  groups {title, importance, summary, hunks[]}  (chunked for big diffs)
- │   (the UI polls and shows live progress while this runs)
+ │   (the UI swaps the groups in as soon as Claude finishes)
  ├─ "Refresh"  →  re-diffs against your worktree (or the host) and carries
  │   the review over: groups, comments and findings keep their place
  └─ "Submit review"  →  posts batched inline comments via gh / glab

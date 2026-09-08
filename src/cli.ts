@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import open from "open";
 import { parseUnifiedDiff } from "./diff/parse.js";
 import { formatAge } from "./format.js";
-import { groupDiff } from "./group/index.js";
+import { fallbackGrouping, groupDiff } from "./group/index.js";
 import {
   hostForId,
   listOpenPulls,
@@ -231,32 +231,37 @@ async function runPipeline(
     server.startArchitect(diffText, diff.files);
   }
 
-  console.error("→ Grouping with Claude…");
-  server.setProgress({ step: "grouping" });
-  const grouping = await groupDiff(diff, diffText, {
-    model: args.model,
-    onProgress: (completed, batches) =>
-      server.setProgress({ step: "grouping", batch: completed, batches }),
-  });
-  console.error(`  ${grouping.groups.length} group(s)` +
-    (grouping.ungrouped.length ? `, ${grouping.ungrouped.length} ungrouped hunk(s)` : ""));
-
   if (existingComments.length) {
     console.error(`  ${existingComments.length} existing comment(s) from reviewers`);
   }
 
+  // Show the diff immediately with a single catch-all group; the real grouping
+  // swaps in below once Claude answers.
   server.setPayload(
     {
       meta,
       files: diff.files,
-      grouping,
+      grouping: fallbackGrouping(diff, "Claude is still grouping the changes."),
       existingComments,
       diffScope,
       reactionsSupported: !!host.toggleReaction,
       architectStarted: args.architect,
+      groupingPending: true,
     },
     diffText,
   );
+
+  console.error("→ Grouping with Claude…");
+  const grouping = await groupDiff(diff, diffText, {
+    model: args.model,
+    onProgress: (completed, batches) => {
+      if (batches > 1) console.error(`  batch ${completed}/${batches}`);
+    },
+  });
+  console.error(`  ${grouping.groups.length} group(s)` +
+    (grouping.ungrouped.length ? `, ${grouping.ungrouped.length} ungrouped hunk(s)` : ""));
+
+  server.setGrouping(grouping);
 }
 
 main().catch((err) => {

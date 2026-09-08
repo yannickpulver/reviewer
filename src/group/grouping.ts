@@ -1,34 +1,10 @@
 import type { ParsedDiff } from "../diff/types.js";
-import type { Flag, FlagSeverity, Group, Grouping, Importance } from "./types.js";
+import type { Group, Grouping, Importance } from "./types.js";
 
 const IMPORTANCE_RANK: Record<Importance, number> = { low: 0, medium: 1, high: 2 };
 
 function isImportance(v: unknown): v is Importance {
   return v === "high" || v === "medium" || v === "low";
-}
-
-function isSeverity(v: unknown): v is FlagSeverity {
-  return v === "warning" || v === "danger";
-}
-
-/**
- * Validate raw model flags, keeping only those anchored to a hunk that actually
- * landed in this group (`groupRefs`). Drops flags with unknown refs or empty notes.
- */
-function reconcileFlags(raw: unknown, groupRefs: Set<string>): Flag[] {
-  const rawFlags = Array.isArray(raw) ? raw : [];
-  const flags: Flag[] = [];
-  for (const f of rawFlags) {
-    const ff = (f ?? {}) as Partial<Flag>;
-    const note = typeof ff.note === "string" ? ff.note.trim() : "";
-    if (!note || typeof ff.hunk !== "string" || !groupRefs.has(ff.hunk)) continue;
-    flags.push({
-      hunk: ff.hunk,
-      severity: isSeverity(ff.severity) ? ff.severity : "warning",
-      note,
-    });
-  }
-  return flags;
 }
 
 /**
@@ -60,7 +36,6 @@ export function reconcileGrouping(raw: unknown, knownRefs: string[]): Grouping {
       importance: isImportance(gg.importance) ? gg.importance : "medium",
       summary: typeof gg.summary === "string" ? gg.summary.trim() : "",
       hunks,
-      flags: reconcileFlags((g as { flags?: unknown }).flags, new Set(hunks)),
     });
   }
 
@@ -83,7 +58,6 @@ export function mergeGroupings(parts: Grouping[]): Grouping {
       const existing = byTitle.get(key);
       if (existing) {
         existing.hunks.push(...g.hunks);
-        existing.flags.push(...g.flags);
         if (IMPORTANCE_RANK[g.importance] > IMPORTANCE_RANK[existing.importance]) {
           existing.importance = g.importance;
         }
@@ -91,7 +65,7 @@ export function mergeGroupings(parts: Grouping[]): Grouping {
           existing.summary = existing.summary ? `${existing.summary} ${g.summary}` : g.summary;
         }
       } else {
-        byTitle.set(key, { ...g, hunks: [...g.hunks], flags: [...g.flags] });
+        byTitle.set(key, { ...g, hunks: [...g.hunks] });
         order.push(key);
       }
     }
@@ -109,20 +83,18 @@ export function sortByImportance(grouping: Grouping): Grouping {
   return { groups, ungrouped: grouping.ungrouped };
 }
 
-/** Fallback grouping when Claude is unavailable: one group holding everything. */
-export function fallbackGrouping(diff: ParsedDiff): Grouping {
+/**
+ * Single group holding everything: used when Claude is unavailable, and as the
+ * placeholder shown while the real grouping is still running (`summary`).
+ */
+export function fallbackGrouping(
+  diff: ParsedDiff,
+  summary = "Automatic grouping was unavailable; showing all changes together.",
+): Grouping {
   const hunks: string[] = [];
   for (const f of diff.files) for (const h of f.hunks) hunks.push(`${f.path}:${h.id}`);
   return {
-    groups: [
-      {
-        title: "All changes",
-        importance: "medium",
-        summary: "Automatic grouping was unavailable; showing all changes together.",
-        hunks,
-        flags: [],
-      },
-    ],
+    groups: [{ title: "All changes", importance: "medium", summary, hunks }],
     ungrouped: [],
   };
 }

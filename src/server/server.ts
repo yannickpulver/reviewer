@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { parseUnifiedDiff } from "../diff/parse.js";
 import type { DiffFile } from "../diff/types.js";
+import type { Grouping } from "../group/types.js";
 import type { Host } from "../host/types.js";
 import { refreshDiff } from "../refresh/localDiff.js";
 import { buildLineMap, carryGrouping, remapExisting, remapFindings } from "../refresh/remap.js";
@@ -45,9 +46,29 @@ export interface ServerHandle extends RunningServer {
   setProgress: (update: Omit<BuildingState, "status">) => void;
   /** Marks the review ready; `diffText` is stashed for the architect review. */
   setPayload: (payload: Omit<ReviewPayload, "rev">, diffText: string) => void;
+  /** Swaps the real grouping in once Claude returns, unless a refresh moved on. */
+  setGrouping: (grouping: Grouping) => void;
   setError: (message: string) => void;
   /** Kick off the architect review early (e.g. in parallel with grouping). */
   startArchitect: (diffText: string, files: DiffFile[]) => void;
+}
+
+/**
+ * Swap a freshly computed grouping into a ready state. `atRev` is the rev the
+ * grouping was computed against: if the diff has been refreshed since — or a
+ * refresh is in flight right now (`refreshInFlight`) and about to replace the
+ * diff — the grouping describes hunks that may no longer exist, so it is
+ * dropped and only the pending marker is cleared.
+ */
+export function applyGrouping(
+  state: ReadyState,
+  grouping: Grouping,
+  atRev: number,
+  refreshInFlight = false,
+): { state: ReadyState; dropped: boolean } {
+  const { groupingPending: _pending, ...rest } = state;
+  if (refreshInFlight || state.rev !== atRev) return { state: rest, dropped: true };
+  return { state: { ...rest, grouping, rev: state.rev + 1 }, dropped: false };
 }
 
 /**
@@ -87,10 +108,14 @@ export function startServer(
     return architectPromise;
   };
 
+  // The rev the pending grouping was computed against; a refresh past it makes
+  // the grouping stale.
+  let groupingRev = 0;
+
   /**
-   * Re-fetch the diff and carry the current review onto it: groups, flags,
-   * existing comments and architect findings all move to their new positions
-   * instead of being recomputed. No Claude call.
+   * Re-fetch the diff and carry the current review onto it: groups, existing
+   * comments and architect findings all move to their new positions instead of
+   * being recomputed. No Claude call.
    */
   async function doRefresh(prev: ReadyState): Promise<RefreshResponse> {
     const refreshed = await refreshDiff(host, prev.meta);
@@ -117,14 +142,18 @@ export function startServer(
       hunksUnchanged: carried.hunksUnchanged,
       hunksChanged: carried.hunksChanged,
       hunksNew: carried.hunksNew,
-      flagsDropped: carried.flagsDropped,
       findingsStale,
       existingDetached: existing.detached,
     };
 
-    const { status: _status, ...rest } = prev;
+    const { status: _status, groupingPending: _wasPending, ...rest } = prev;
+    // A grouping that landed mid-refresh was dropped, but it cleared the pending
+    // marker on the live state — honour that rather than the snapshot we started
+    // from, or the spinner would never go away.
+    const pending = state.status === "ready" ? state.groupingPending : prev.groupingPending;
     const payload: ReviewPayload = {
       ...rest,
+      ...(pending ? { groupingPending: true } : {}),
       files: diff.files,
       grouping: carried.grouping,
       existingComments: existing.comments,
@@ -237,6 +266,15 @@ export function startServer(
           setPayload: (payload, dt) => {
             diffText = dt;
             state = { status: "ready", rev: 0, ...payload };
+            groupingRev = 0;
+          },
+          setGrouping: (grouping) => {
+            if (state.status !== "ready") return;
+            const result = applyGrouping(state, grouping, groupingRev, refreshing !== null);
+            if (result.dropped) {
+              console.error("grouping discarded: diff refreshed meanwhile");
+            }
+            state = result.state;
           },
           setError: (message) => {
             state = { status: "error", message };
