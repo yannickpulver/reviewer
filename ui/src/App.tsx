@@ -22,6 +22,7 @@ export function App() {
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
+  const [verdict, setVerdict] = useState<ReviewAction | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [refreshing, setRefreshing] = useState(false);
@@ -295,6 +296,7 @@ export function App() {
     try {
       const { url } = await submitReview(commentList, summary, action);
       setSubmitted(url);
+      setVerdict(action);
       setConfirming(false);
     } catch (e) {
       setSubmitError((e as Error).message);
@@ -338,6 +340,7 @@ export function App() {
         diffScope={payload.diffScope}
         sections={sections}
         groupingPending={!!payload.groupingPending}
+        verdict={verdict}
         active={active}
         counts={counts}
         existingCounts={existingCounts}

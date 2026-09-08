@@ -15,11 +15,18 @@ import type {
   PullMeta,
   PullState,
   RefreshSummary,
+  ReviewAction,
 } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SEVERITY_LABELS, SEVERITY_STYLES, type ArchitectFindingView } from "./DiffView";
+
+const VERDICT_BADGES: Record<ReviewAction, { label: string; className: string }> = {
+  approve: { label: "Approved", className: "border-transparent bg-emerald-500/15 text-emerald-700" },
+  request_changes: { label: "Changes requested", className: "border-transparent bg-amber-500/15 text-amber-700" },
+  comment: { label: "Commented", className: "border-transparent bg-zinc-500/15 text-zinc-600" },
+};
 
 const STATE_STYLES: Record<PullState, string> = {
   open: "border-transparent bg-emerald-500/15 text-emerald-700",
@@ -41,6 +48,8 @@ interface Props {
   sections: Group[];
   /** True while Claude is still grouping and `sections` is only the fallback. */
   groupingPending: boolean;
+  /** Verdict of the review submitted in this session, once there is one. */
+  verdict: ReviewAction | null;
   active: number;
   counts: number[];
   existingCounts: number[];
@@ -62,6 +71,7 @@ export function Sidebar({
   diffScope,
   sections,
   groupingPending,
+  verdict,
   active,
   counts,
   existingCounts,
@@ -93,6 +103,11 @@ export function Sidebar({
           <Badge className={cn("ml-auto capitalize", STATE_STYLES[meta.state])}>
             {meta.host === "local" ? "branch" : meta.state}
           </Badge>
+          {verdict && (
+            <Badge className={VERDICT_BADGES[verdict].className}>
+              {VERDICT_BADGES[verdict].label}
+            </Badge>
+          )}
           <button
             type="button"
             onClick={onRefresh}
