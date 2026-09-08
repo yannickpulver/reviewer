@@ -12,7 +12,7 @@ import type { Grouping } from "./types.js";
 const BATCH_CHAR_BUDGET = 400_000;
 
 /** Max diff body lines per hunk in the grouping prompt — classification doesn't need full bodies. */
-const MAX_HUNK_LINES = 40;
+const MAX_HUNK_LINES = 20;
 
 export interface GroupOptions {
   run?: Runner;
@@ -145,19 +145,15 @@ function buildPrompt(batch: FileSegment[]): string {
 
   return `You are organizing a code review. Group the changed hunks into logically related units so a reviewer can review related changes together, and push low-signal changes (string/copy tweaks, formatting, lockfile/dependency bumps, generated files, trivial chores) into low-importance groups.
 
-You also flag changes that may need a closer look: likely bugs, risky edits, missing error/null handling, security or data-loss risks, or logic that looks off. Only flag things you have real reason to doubt — do not invent problems, and skip groups where nothing stands out.
-
 Rules:
 - Reference hunks ONLY by the exact ids listed below. Do not invent ids.
 - Every hunk should go in exactly one group.
 - importance is one of: "high", "medium", "low".
-- summary: one or two sentences on what the group changes and why it matters.
-- flags: optional array of attention hints for this group. Each flag points at ONE hunk id (which must be one of that group's hunks) with a severity and a one-sentence note. Omit or leave empty when nothing is worth flagging.
-- flag severity is one of: "danger" (likely a bug or real risk), "warning" (worth a closer look).
+- summary: one sentence on what the group changes and why it matters.
 - Respond with ONLY a JSON object, no prose, no code fences.
 
 JSON shape:
-{"groups":[{"title":"...","importance":"high|medium|low","summary":"...","hunks":["file:Hn"],"flags":[{"hunk":"file:Hn","severity":"danger|warning","note":"..."}]}]}
+{"groups":[{"title":"...","importance":"high|medium|low","summary":"...","hunks":["file:Hn"]}]}
 
 Hunk ids:
 ${refListing}

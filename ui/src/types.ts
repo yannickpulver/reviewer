@@ -29,20 +29,11 @@ export interface DiffFile {
   hunks: Hunk[];
 }
 
-export type FlagSeverity = "warning" | "danger";
-
-export interface Flag {
-  hunk: string;
-  severity: FlagSeverity;
-  note: string;
-}
-
 export interface Group {
   title: string;
   importance: Importance;
   summary: string;
   hunks: string[];
-  flags: Flag[];
 }
 
 export interface Grouping {
@@ -74,6 +65,8 @@ export interface ReviewPayload {
   diffScope: DiffScope;
   reactionsSupported: boolean;
   architectStarted?: boolean;
+  /** True while `grouping` is only a fallback and Claude's real grouping is still running. */
+  groupingPending?: boolean;
   /** Bumped on every refresh; 0 for the original review. */
   rev: number;
   refresh?: RefreshSummary;
@@ -88,7 +81,6 @@ export interface RefreshSummary {
   hunksUnchanged: number;
   hunksChanged: number;
   hunksNew: number;
-  flagsDropped: number;
   findingsStale: number;
   existingDetached: number;
 }
@@ -102,13 +94,11 @@ export interface RefreshResponse {
   summary: RefreshSummary;
 }
 
-export type BuildStep = "fetching" | "grouping";
+export type BuildStep = "fetching";
 
 export interface BuildingState {
   status: "building";
   step: BuildStep;
-  batch?: number;
-  batches?: number;
 }
 
 export interface ReviewErrorState {

@@ -39,6 +39,8 @@ interface Props {
   meta: PullMeta;
   diffScope: DiffScope;
   sections: Group[];
+  /** True while Claude is still grouping and `sections` is only the fallback. */
+  groupingPending: boolean;
   active: number;
   counts: number[];
   existingCounts: number[];
@@ -59,6 +61,7 @@ export function Sidebar({
   meta,
   diffScope,
   sections,
+  groupingPending,
   active,
   counts,
   existingCounts,
@@ -136,6 +139,12 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto p-2">
+        {groupingPending && (
+          <div className="mb-1 flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
+            <Loader2 className="size-3.5 shrink-0 animate-spin" />
+            Grouping with Claude…
+          </div>
+        )}
         {sections.map((s, i) => {
           const isReviewed = reviewed.has(i);
           return (

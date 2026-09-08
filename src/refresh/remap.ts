@@ -1,5 +1,5 @@
 import type { DiffFile, Hunk } from "../diff/types.js";
-import type { Flag, Group, Grouping } from "../group/types.js";
+import type { Group, Grouping } from "../group/types.js";
 import type { ExistingComment } from "../host/types.js";
 import type { ArchitectFinding } from "../review/architect.js";
 
@@ -141,8 +141,6 @@ export interface CarryResult {
   hunksChanged: number;
   /** Hunks in a file that wasn't part of the review. */
   hunksNew: number;
-  /** Flags dropped because the code they pointed at changed. */
-  flagsDropped: number;
 }
 
 /**
@@ -150,8 +148,7 @@ export interface CarryResult {
  *
  * A hunk that's identical keeps its exact group; one whose content changed stays
  * in the group its file already belonged to; one in a file that wasn't under
- * review lands in a fresh group titled `freshTitle`. Flags survive only on
- * unchanged hunks — a hint about code you just rewrote is no longer trustworthy.
+ * review lands in a fresh group titled `freshTitle`.
  */
 export function carryGrouping(
   prev: Grouping,
@@ -189,7 +186,6 @@ export function carryGrouping(
   }
 
   const assigned = new Map<number, string[]>();
-  const carriedRef = new Map<string, string>(); // old ref → new ref, unchanged hunks only
   let hunksUnchanged = 0;
   let hunksChanged = 0;
   let hunksNew = 0;
@@ -199,7 +195,6 @@ export function carryGrouping(
     let target: number;
     if (oldRef !== undefined && groupOf.has(oldRef)) {
       target = groupOf.get(oldRef)!;
-      carriedRef.set(oldRef, ref);
       hunksUnchanged++;
     } else if (fileGroup.has(path)) {
       target = fileGroup.get(path)!;
@@ -213,7 +208,6 @@ export function carryGrouping(
     assigned.set(target, list);
   }
 
-  let flagsDropped = 0;
   const groups: Group[] = [];
 
   const fresh = assigned.get(FRESH) ?? [];
@@ -223,21 +217,13 @@ export function carryGrouping(
       importance: "medium",
       summary: "Changes that weren't part of the review yet.",
       hunks: fresh,
-      flags: [],
     });
   }
 
   prev.groups.forEach((g, i) => {
     const hunks = assigned.get(i) ?? [];
     if (hunks.length === 0) return;
-    const live = new Set(hunks);
-    const flags: Flag[] = [];
-    for (const f of g.flags) {
-      const ref = carriedRef.get(f.hunk);
-      if (ref && live.has(ref)) flags.push({ ...f, hunk: ref });
-      else flagsDropped++;
-    }
-    groups.push({ ...g, hunks, flags });
+    groups.push({ ...g, hunks });
   });
 
   return {
@@ -245,7 +231,6 @@ export function carryGrouping(
     hunksUnchanged,
     hunksChanged,
     hunksNew,
-    flagsDropped,
   };
 }
 

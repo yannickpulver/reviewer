@@ -23,6 +23,8 @@ export interface ReviewPayload {
   reactionsSupported: boolean;
   /** True when the architect review was started alongside grouping (--architect). */
   architectStarted?: boolean;
+  /** True while `grouping` is only a fallback and the real one is still being computed. */
+  groupingPending?: boolean;
   /** Bumped on every refresh; 0 for the original review. */
   rev: number;
   /** Result of the most recent refresh, if any. */
@@ -38,8 +40,6 @@ export interface RefreshSummary {
   hunksUnchanged: number;
   hunksChanged: number;
   hunksNew: number;
-  /** Grouping flags dropped because their hunk changed. */
-  flagsDropped: number;
   /** Architect findings whose line is gone — likely fixed. */
   findingsStale: number;
   /** Existing PR/MR comments that no longer anchor to a diff line. */
@@ -68,14 +68,12 @@ export interface SubmitBody {
   action: ReviewAction;
 }
 
-export type BuildStep = "fetching" | "grouping";
+export type BuildStep = "fetching";
 
 /** Progress reported by GET /api/review while the pipeline is still running. */
 export interface BuildingState {
   status: "building";
   step: BuildStep;
-  batch?: number;
-  batches?: number;
 }
 
 export interface ReviewErrorState {
