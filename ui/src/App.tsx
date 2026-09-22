@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import type { BuildingState, BuildStep, Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
 import { getReview, refreshReview, runArchitectReview, submitReview } from "./api";
-import { indexHunks, lineKey, remapDrafts } from "./lib/diff";
+import { indexHunks, lineKey, remapDrafts, searchFiles } from "./lib/diff";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Sidebar, type ArchitectState } from "./components/Sidebar";
-import { SectionContent } from "./components/SectionContent";
+import { SectionContent, fileBlockId } from "./components/SectionContent";
+import { SearchContent } from "./components/SearchContent";
 import type { ArchitectApi, ArchitectFindingView, CommentsApi, ExistingLookup } from "./components/DiffView";
 
 export function App() {
@@ -29,11 +30,14 @@ export function App() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [detached, setDetached] = useState<ReviewComment[]>([]);
 
+  const [search, setSearch] = useState("");
+
   const [architect, setArchitect] = useState<ArchitectState>({ status: "idle" });
   const [adoptedFindings, setAdoptedFindings] = useState<Set<number>>(new Set());
   const [dismissedFindings, setDismissedFindings] = useState<Set<number>>(new Set());
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   // The "r" shortcut binds once; route it through a ref so it always calls the
   // current closure rather than the one from first render.
   const doRefreshRef = useRef<(() => void) | null>(null);
@@ -90,11 +94,12 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "r" || e.metaKey || e.ctrlKey || e.altKey) return;
+      if ((e.key !== "r" && e.key !== "/") || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
       if (el?.closest("input, textarea, [contenteditable=true]")) return;
       e.preventDefault();
-      doRefreshRef.current?.();
+      if (e.key === "/") searchRef.current?.focus();
+      else doRefreshRef.current?.();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -121,6 +126,17 @@ export function App() {
   );
 
   const index = useMemo(() => (payload ? indexHunks(payload.files) : new Map()), [payload]);
+
+  const query = search.trim();
+  const searchResults = useMemo(
+    () => (payload && query ? searchFiles(payload.files, query) : []),
+    [payload, query],
+  );
+
+  /** Bring a file's diff block into view inside the scroll container. */
+  function selectFile(path: string) {
+    document.getElementById(fileBlockId(path))?.scrollIntoView({ block: "start" });
+  }
 
   const existingByLine = useMemo(() => {
     const m = new Map<string, ReviewPayload["existingComments"]>();
@@ -354,11 +370,27 @@ export function App() {
         refreshing={refreshing}
         refreshError={refreshError}
         onRefresh={doRefresh}
+        search={search}
+        onSearchChange={setSearch}
+        searchResults={searchResults}
+        onSelectFile={selectFile}
+        searchRef={searchRef}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-6">
-          {current ? (
+          {query ? (
+            <SearchContent
+              query={query}
+              results={searchResults}
+              meta={payload.meta}
+              index={index}
+              comments={commentsApi}
+              existing={existingLookup}
+              architect={architectApi}
+              reactionsSupported={payload.reactionsSupported}
+            />
+          ) : current ? (
             <SectionContent
               section={current}
               meta={payload.meta}

@@ -2,7 +2,7 @@ import { Check, ExternalLink } from "lucide-react";
 import type { Group, PullMeta, ResolvedHunk } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { blocksForRefs } from "@/lib/diff";
+import { blocksForRefs, type FileBlock } from "@/lib/diff";
 import { fileUrl } from "@/lib/links";
 import { cn } from "@/lib/utils";
 import { DiffView, type ArchitectApi, type CommentsApi, type ExistingLookup } from "./DiffView";
@@ -17,6 +17,67 @@ interface Props {
   reactionsSupported: boolean;
   reviewed: boolean;
   onToggleReviewed: () => void;
+}
+
+/** DOM id of a file block, so the sidebar can scroll to it. */
+export function fileBlockId(path: string): string {
+  return `file-${encodeURIComponent(path)}`;
+}
+
+interface FileBlocksProps {
+  blocks: FileBlock[];
+  meta: PullMeta;
+  comments: CommentsApi;
+  existing: ExistingLookup;
+  architect: ArchitectApi;
+  reactionsSupported: boolean;
+}
+
+/** The per-file diff list: a linked file header plus its hunks. */
+export function FileBlocks({
+  blocks,
+  meta,
+  comments,
+  existing,
+  architect,
+  reactionsSupported,
+}: FileBlocksProps) {
+  return (
+    <>
+      {blocks.map((block, i) => {
+        const href = fileUrl(meta, block.path);
+        return (
+          <div
+            key={`${block.path}-${i}`}
+            id={fileBlockId(block.path)}
+            className="space-y-1 scroll-mt-24"
+          >
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
+              >
+                {block.path}
+                <ExternalLink className="size-3" />
+              </a>
+            ) : (
+              <div className="font-mono text-xs text-muted-foreground">{block.path}</div>
+            )}
+            <DiffView
+              path={block.path}
+              hunks={block.hunks}
+              comments={comments}
+              existing={existing}
+              architect={architect}
+              reactionsSupported={reactionsSupported}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
 }
 
 export function SectionContent({
@@ -53,34 +114,14 @@ export function SectionContent({
         )}
       </div>
 
-      {blocks.map((block, i) => {
-        const href = fileUrl(meta, block.path);
-        return (
-          <div key={`${block.path}-${i}`} className="space-y-1">
-            {href ? (
-              <a
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
-              >
-                {block.path}
-                <ExternalLink className="size-3" />
-              </a>
-            ) : (
-              <div className="font-mono text-xs text-muted-foreground">{block.path}</div>
-            )}
-            <DiffView
-              path={block.path}
-              hunks={block.hunks}
-              comments={comments}
-              existing={existing}
-              architect={architect}
-              reactionsSupported={reactionsSupported}
-            />
-          </div>
-        );
-      })}
+      <FileBlocks
+        blocks={blocks}
+        meta={meta}
+        comments={comments}
+        existing={existing}
+        architect={architect}
+        reactionsSupported={reactionsSupported}
+      />
     </div>
   );
 }

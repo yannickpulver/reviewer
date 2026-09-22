@@ -66,3 +66,39 @@ export function hunkToText(hunk: Hunk): string {
   const body = hunk.lines.map((l) => sign(l.type) + l.content).join("\n");
   return `${hunk.header}\n${body}`;
 }
+
+/** One file matching a search query, with every ref of that file. */
+export interface SearchHit {
+  path: string;
+  refs: string[];
+  /** Number of diff lines containing the query (0 when only the path matched). */
+  matches: number;
+}
+
+/**
+ * Files whose path, or any diff line, contains `query` (case-insensitive).
+ * Binary files can only match on their path.
+ */
+export function searchFiles(files: DiffFile[], query: string): SearchHit[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const hits: SearchHit[] = [];
+  for (const file of files) {
+    const pathMatch = file.path.toLowerCase().includes(needle);
+    let matches = 0;
+    if (!file.binary) {
+      for (const hunk of file.hunks) {
+        for (const line of hunk.lines) {
+          if (line.content.toLowerCase().includes(needle)) matches++;
+        }
+      }
+    }
+    if (!pathMatch && matches === 0) continue;
+    hits.push({
+      path: file.path,
+      refs: file.hunks.map((h) => `${file.path}:${h.id}`),
+      matches,
+    });
+  }
+  return hits;
+}

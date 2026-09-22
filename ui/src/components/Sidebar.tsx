@@ -6,7 +6,9 @@ import {
   MessageSquare,
   RefreshCw,
   RotateCw,
+  Search,
   Sparkles,
+  X,
 } from "lucide-react";
 import type {
   ArchitectReview,
@@ -17,6 +19,7 @@ import type {
   RefreshSummary,
   ReviewAction,
 } from "@/types";
+import type { SearchHit } from "@/lib/diff";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -64,6 +67,12 @@ interface Props {
   refreshing: boolean;
   refreshError: string | null;
   onRefresh: () => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  /** Files matching `search`; replaces the section list while the query is set. */
+  searchResults: SearchHit[];
+  onSelectFile: (path: string) => void;
+  searchRef: React.Ref<HTMLInputElement>;
 }
 
 export function Sidebar({
@@ -85,7 +94,13 @@ export function Sidebar({
   refreshing,
   refreshError,
   onRefresh,
+  search,
+  onSearchChange,
+  searchResults,
+  onSelectFile,
+  searchRef,
 }: Props) {
+  const searching = search.trim().length > 0;
   return (
     <aside className="flex h-screen w-80 shrink-0 flex-col border-r bg-card">
       <div className="space-y-1 border-b px-4 py-4">
@@ -153,52 +168,103 @@ export function Sidebar({
         )}
       </div>
 
-      <nav className="flex-1 overflow-y-auto p-2">
-        {groupingPending && (
-          <div className="mb-1 flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
-            <Loader2 className="size-3.5 shrink-0 animate-spin" />
-            Grouping with Claude…
-          </div>
-        )}
-        {sections.map((s, i) => {
-          const isReviewed = reviewed.has(i);
-          return (
+      <div className="border-b px-2 py-2">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            ref={searchRef}
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Escape") return;
+              onSearchChange("");
+              e.currentTarget.blur();
+            }}
+            placeholder="Search files and changes…"
+            className="h-8 w-full rounded-md border bg-background pl-7 pr-7 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          {search && (
             <button
-              key={`${s.title}-${i}`}
-              onClick={() => onSelect(i)}
-              className={cn(
-                "mb-1 w-full rounded-md px-3 py-2 text-left transition-colors",
-                i === active ? "bg-muted" : "hover:bg-muted/60",
-                isReviewed && i !== active && "opacity-50",
-              )}
+              type="button"
+              onClick={() => onSearchChange("")}
+              title="Clear search"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
-              <div className="flex items-center gap-2">
-                <Badge variant={s.importance}>{s.importance}</Badge>
-                <div className="ml-auto flex items-center gap-1.5">
-                  {existingCounts[i]! > 0 && (
-                    <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
-                      <MessageSquare className="size-3" />
-                      {existingCounts[i]}
-                    </span>
-                  )}
-                  {counts[i]! > 0 && <Badge variant="outline">{counts[i]}</Badge>}
-                  {isReviewed && <CheckCircle2 className="size-3.5 text-emerald-600" />}
-                </div>
-              </div>
-              <div
-                className={cn(
-                  "mt-1 truncate text-sm font-medium",
-                  isReviewed && "line-through",
-                )}
-              >
-                {s.title}
-              </div>
-              <div className="truncate text-xs text-muted-foreground">
-                {s.hunks.length} hunk{s.hunks.length === 1 ? "" : "s"}
-              </div>
+              <X className="size-3.5" />
             </button>
-          );
-        })}
+          )}
+        </div>
+      </div>
+
+      <nav className="flex-1 overflow-y-auto p-2">
+        {searching ? (
+          searchResults.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-muted-foreground">No matches</p>
+          ) : (
+            searchResults.map((hit) => (
+              <button
+                key={hit.path}
+                onClick={() => onSelectFile(hit.path)}
+                className="mb-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-muted/60"
+              >
+                <span className="truncate font-mono text-xs" title={hit.path}>
+                  {hit.path}
+                </span>
+                <Badge variant="outline" className="ml-auto shrink-0">
+                  {hit.matches > 0 ? hit.matches : "path"}
+                </Badge>
+              </button>
+            ))
+          )
+        ) : (
+          <>
+            {groupingPending && (
+              <div className="mb-1 flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
+                <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                Grouping with Claude…
+              </div>
+            )}
+            {sections.map((s, i) => {
+              const isReviewed = reviewed.has(i);
+              return (
+                <button
+                  key={`${s.title}-${i}`}
+                  onClick={() => onSelect(i)}
+                  className={cn(
+                    "mb-1 w-full rounded-md px-3 py-2 text-left transition-colors",
+                    i === active ? "bg-muted" : "hover:bg-muted/60",
+                    isReviewed && i !== active && "opacity-50",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <Badge variant={s.importance}>{s.importance}</Badge>
+                    <div className="ml-auto flex items-center gap-1.5">
+                      {existingCounts[i]! > 0 && (
+                        <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                          <MessageSquare className="size-3" />
+                          {existingCounts[i]}
+                        </span>
+                      )}
+                      {counts[i]! > 0 && <Badge variant="outline">{counts[i]}</Badge>}
+                      {isReviewed && <CheckCircle2 className="size-3.5 text-emerald-600" />}
+                    </div>
+                  </div>
+                  <div
+                    className={cn(
+                      "mt-1 truncate text-sm font-medium",
+                      isReviewed && "line-through",
+                    )}
+                  >
+                    {s.title}
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {s.hunks.length} hunk{s.hunks.length === 1 ? "" : "s"}
+                  </div>
+                </button>
+              );
+            })}
+          </>
+        )}
       </nav>
     </aside>
   );
