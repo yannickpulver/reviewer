@@ -14,7 +14,7 @@ import {
   type HostKind,
   type PullSummary,
 } from "./host/index.js";
-import { startServer, type ServerHandle } from "./server/index.js";
+import { startServer, type QueueItem, type SessionHandle } from "./server/index.js";
 
 interface Args {
   input: string;
@@ -25,6 +25,7 @@ interface Args {
   base?: string;
   sinceLastReview: boolean;
   architect: boolean;
+  queue: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -36,6 +37,7 @@ function parseArgs(argv: string[]): Args {
   let base: string | undefined;
   let sinceLastReview = false;
   let architect = false;
+  let queue = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--no-open") noOpen = true;
@@ -45,6 +47,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--model") model = argv[++i];
     else if (a === "--since-last-review") sinceLastReview = true;
     else if (a === "--architect") architect = true;
+    else if (a === "--queue") queue = true;
     else if (a === "-h" || a === "--help") {
       printHelp();
       process.exit(0);
@@ -53,29 +56,46 @@ function parseArgs(argv: string[]): Args {
       process.exit(1);
     } else input = a;
   }
-  return { input, port, noOpen, model, local, base, sinceLastReview, architect };
+  return { input, port, noOpen, model, local, base, sinceLastReview, architect, queue };
 }
 
 /**
  * With no argument: list open PRs/MRs and let the user pick one, plus a final
- * "review the current local branch" option for pre-PR work. Fails when there's
- * no remote or no open PRs/MRs — reviewing the local branch stays explicit
- * (--local or the picker option).
+ * "review the current local branch" option for pre-PR work, and "a" to queue
+ * every PR/MR waiting on the user's review. Fails when there's no remote or no
+ * open PRs/MRs — reviewing the local branch stays explicit (--local or the
+ * picker option).
  */
-async function pickOpenPull(base?: string): Promise<Host> {
-  console.error("→ Listing open PRs/MRs…");
-  let listing: Awaited<ReturnType<typeof listOpenPulls>>;
-  try {
-    listing = await listOpenPulls();
-  } catch (e) {
-    throw new Error(`${(e as Error).message} — use --local to review the current branch`);
-  }
-  const { host, repo, pulls } = listing;
+async function pickOpenPull(base?: string): Promise<QueueItem[]> {
+  const { host, repo, pulls } = await listPulls();
   if (pulls.length === 0) {
     throw new Error("no open PRs/MRs — use --local to review the current branch");
   }
   printPullList(pulls);
   return promptChoice(pulls, host, repo, base);
+}
+
+/** --queue: every open PR/MR whose review is requested from the user. */
+async function requestedQueue(): Promise<QueueItem[]> {
+  const { host, repo, pulls } = await listPulls();
+  const items = queueOf(pulls, host, repo);
+  if (items.length === 0) throw new Error("no open PRs/MRs request your review");
+  return items;
+}
+
+async function listPulls() {
+  console.error("→ Listing open PRs/MRs…");
+  try {
+    return await listOpenPulls();
+  } catch (e) {
+    throw new Error(`${(e as Error).message} — use --local to review the current branch`);
+  }
+}
+
+function queueOf(pulls: PullSummary[], host: HostKind, repo: string): QueueItem[] {
+  return pulls
+    .filter((p) => p.reviewRequestedFromMe)
+    .map((p) => ({ host: hostForId(host, p.id, repo), label: p }));
 }
 
 const BUCKET_LABELS = ["Review requested from you", "Assigned to you", "Other open"];
@@ -102,6 +122,12 @@ function printPullList(pulls: PullSummary[]) {
   console.error(
     `\n  ${String(localChoice).padStart(width)}. Review the current local branch (no PR/MR)`,
   );
+  const requested = pulls.filter((p) => p.reviewRequestedFromMe).length;
+  if (requested > 0) {
+    console.error(
+      `  ${"a".padStart(width)}. Review all ${requested} requested from you, one after another`,
+    );
+  }
   console.error("");
 }
 
@@ -118,16 +144,19 @@ async function promptChoice(
   host: HostKind,
   repo: string,
   base?: string,
-): Promise<Host> {
+): Promise<QueueItem[]> {
   const localChoice = pulls.length + 1;
+  const queue = queueOf(pulls, host, repo);
+  const range = `1-${localChoice}${queue.length ? ", a" : ""}`;
   for (;;) {
-    const ans = (await promptLine(`Pick [1-${localChoice}]: `)).trim();
+    const ans = (await promptLine(`Pick [${range}]: `)).trim();
+    if (ans.toLowerCase() === "a" && queue.length) return queue;
     const n = Number(ans);
-    if (n === localChoice) return makeLocalHost(base);
+    if (n === localChoice) return [{ host: await makeLocalHost(base) }];
     if (Number.isInteger(n) && n >= 1 && n <= pulls.length) {
-      return hostForId(host, pulls[n - 1]!.id, repo);
+      return [{ host: hostForId(host, pulls[n - 1]!.id, repo) }];
     }
-    console.error(`  Enter a number between 1 and ${localChoice}.`);
+    console.error(`  Enter ${range.replace(", a", " or a")}.`);
   }
 }
 
@@ -149,10 +178,13 @@ Usage:
   reviewer <pr-or-mr-number>          (run inside the repo)
   reviewer <github-or-gitlab-url>
   reviewer --local                    (review the current branch, no PR needed)
+  reviewer --queue                    (all PRs/MRs requesting your review, one after another)
 
 Options:
   --local              review the current branch's changes (commits + uncommitted)
   --base <ref>         base to diff against for --local (default: origin/HEAD, else main/master)
+  --queue              open every PR/MR requesting your review; the next ones load
+                       in the background while you review the current one
   --since-last-review  only show changes since your last review (GitHub only)
   --architect          run the Claude architect review in parallel with grouping
   --port <n>           bind to a specific port (default: free ephemeral port)
@@ -176,18 +208,27 @@ async function resolveSinceLastReview(host: Host, flagSet: boolean): Promise<boo
   return ans === "2";
 }
 
+/** How many reviews fetch + group at once; the rest wait their turn. */
+const PRELOAD_CONCURRENCY = 2;
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  const host = args.local
-    ? (console.error("→ Reviewing local branch…"), await makeLocalHost(args.base))
-    : args.input
-      ? (console.error("→ Resolving PR/MR…"), await resolveHost(args.input))
-      : await pickOpenPull(args.base);
+  const items: QueueItem[] = args.local
+    ? (console.error("→ Reviewing local branch…"), [{ host: await makeLocalHost(args.base) }])
+    : args.queue
+      ? await requestedQueue()
+      : args.input
+        ? (console.error("→ Resolving PR/MR…"), [{ host: await resolveHost(args.input) }])
+        : await pickOpenPull(args.base);
 
-  const sinceLastReview = await resolveSinceLastReview(host, args.sinceLastReview);
+  // The "since last review" question is per PR — a queue takes the flag as is.
+  const sinceLastReview =
+    items.length === 1
+      ? await resolveSinceLastReview(items[0]!.host, args.sinceLastReview)
+      : args.sinceLastReview;
 
-  const server = await startServer(host, args.port, { model: args.model });
+  const server = await startServer(items, args.port, { model: args.model });
   const openLine = args.noOpen ? `\n  Review: ${server.url}` : `\n  Opening ${server.url}`;
   console.error(`${openLine}\n  Press Ctrl-C to stop.`);
 
@@ -199,40 +240,55 @@ async function main() {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  runPipeline(host, sinceLastReview, args, server).catch((err) => {
-    console.error(`\n✖ ${(err as Error).message}`);
-    server.setError((err as Error).message);
-    process.exitCode = 1;
-  });
+  // Queue order: the first review is the one on screen, the next ones preload.
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const slot = next++;
+      const session = server.sessions[slot]!;
+      const log = items.length > 1 ? prefixed(`[${slot + 1}/${items.length}]`) : console.error;
+      await runPipeline(items[slot]!.host, sinceLastReview, args, session, log).catch((err) => {
+        log(`\n✖ ${(err as Error).message}`);
+        session.setError((err as Error).message);
+        if (items.length === 1) process.exitCode = 1;
+      });
+    }
+  };
+  await Promise.all(Array.from({ length: PRELOAD_CONCURRENCY }, worker));
+}
+
+function prefixed(prefix: string): (msg: string) => void {
+  return (msg) => console.error(msg.replace(/^(\n*)/, `$1${prefix} `));
 }
 
 async function runPipeline(
   host: Host,
   sinceLastReview: boolean,
   args: Args,
-  server: ServerHandle,
+  server: SessionHandle,
+  log: (msg: string) => void,
 ) {
-  console.error("→ Fetching diff…");
+  log("→ Fetching diff…");
   server.setProgress({ step: "fetching" });
   const { meta, diffText, comments: existingComments, diffScope } = await host.fetch({
     sinceLastReview,
   });
   if (diffScope === "since-last-review") {
-    console.error("  showing changes since your last review");
+    log("  showing changes since your last review");
   }
 
   const diff = parseUnifiedDiff(diffText);
   const fileCount = diff.files.length;
   const label = meta.host === "local" ? `local ${meta.headRef}` : `${meta.host} #${meta.id}`;
-  console.error(`  ${label}: "${meta.title}" — ${fileCount} file(s)`);
+  log(`  ${label}: "${meta.title}" — ${fileCount} file(s)`);
 
   if (args.architect) {
-    console.error("→ Starting architect review (in parallel)…");
+    log("→ Starting architect review (in parallel)…");
     server.startArchitect(diffText, diff.files);
   }
 
   if (existingComments.length) {
-    console.error(`  ${existingComments.length} existing comment(s) from reviewers`);
+    log(`  ${existingComments.length} existing comment(s) from reviewers`);
   }
 
   // Show the diff immediately with a single catch-all group; the real grouping
@@ -251,14 +307,14 @@ async function runPipeline(
     diffText,
   );
 
-  console.error("→ Grouping with Claude…");
+  log("→ Grouping with Claude…");
   const grouping = await groupDiff(diff, diffText, {
     model: args.model,
     onProgress: (completed, batches) => {
-      if (batches > 1) console.error(`  batch ${completed}/${batches}`);
+      if (batches > 1) log(`  batch ${completed}/${batches}`);
     },
   });
-  console.error(`  ${grouping.groups.length} group(s)` +
+  log(`  ${grouping.groups.length} group(s)` +
     (grouping.ungrouped.length ? `, ${grouping.ungrouped.length} ungrouped hunk(s)` : ""));
 
   server.setGrouping(grouping);

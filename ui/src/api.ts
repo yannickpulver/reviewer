@@ -1,5 +1,7 @@
+import { createContext, useContext } from "react";
 import type {
   ArchitectReview,
+  QueueEntry,
   Reaction,
   RefreshResponse,
   ReviewAction,
@@ -7,68 +9,67 @@ import type {
   ReviewComment,
 } from "./types";
 
-export async function getReview(): Promise<ReviewApiResponse> {
-  const res = await fetch("/api/review");
-  if (!res.ok) throw new Error(`Failed to load review (${res.status})`);
+export async function getQueue(): Promise<QueueEntry[]> {
+  const res = await fetch("/api/queue");
+  if (!res.ok) throw new Error(`Failed to load reviews (${res.status})`);
   return res.json();
 }
 
-export async function submitReview(
-  comments: ReviewComment[],
-  summary: string,
-  action: ReviewAction,
-): Promise<{ url: string }> {
-  const res = await fetch("/api/review", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ comments, summary, action }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? `Submit failed (${res.status})`);
-  return data;
+/** The API of one queued review, served under `/api/s/<slot>/`. */
+export function createApi(slot: number) {
+  const base = `/api/s/${slot}`;
+
+  async function post<T>(path: string, label: string, body?: unknown): Promise<T> {
+    const res = await fetch(`${base}${path}`, {
+      method: "POST",
+      ...(body !== undefined && {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? `${label} failed (${res.status})`);
+    return data;
+  }
+
+  return {
+    async getReview(): Promise<ReviewApiResponse> {
+      const res = await fetch(`${base}/review`);
+      if (!res.ok) throw new Error(`Failed to load review (${res.status})`);
+      return res.json();
+    },
+
+    submitReview: (
+      comments: ReviewComment[],
+      summary: string,
+      action: ReviewAction,
+    ): Promise<{ url: string }> => post("/review", "Submit", { comments, summary, action }),
+
+    refreshReview: (): Promise<RefreshResponse> => post("/refresh", "Refresh"),
+
+    runArchitectReview: (force = false): Promise<ArchitectReview> =>
+      post(`/architect-review${force ? "?force=1" : ""}`, "Review"),
+
+    toggleReaction: async (
+      commentId: string,
+      content: string,
+      remove: boolean,
+    ): Promise<Reaction[]> =>
+      (await post<{ reactions: Reaction[] }>("/react", "Reaction", { commentId, content, remove }))
+        .reactions,
+
+    askClaude: (
+      path: string,
+      line: number,
+      code: string,
+      question: string,
+    ): Promise<{ answer: string }> => post("/ask", "Ask", { path, line, code, question }),
+  };
 }
 
-export async function refreshReview(): Promise<RefreshResponse> {
-  const res = await fetch("/api/refresh", { method: "POST" });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? `Refresh failed (${res.status})`);
-  return data;
-}
+export type Api = ReturnType<typeof createApi>;
 
-export async function runArchitectReview(force = false): Promise<ArchitectReview> {
-  const res = await fetch(`/api/architect-review${force ? "?force=1" : ""}`, { method: "POST" });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? `Review failed (${res.status})`);
-  return data;
-}
+/** The API of the review a component is rendered in. */
+export const ApiContext = createContext<Api>(createApi(0));
 
-export async function toggleReaction(
-  commentId: string,
-  content: string,
-  remove: boolean,
-): Promise<Reaction[]> {
-  const res = await fetch("/api/react", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ commentId, content, remove }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? `Reaction failed (${res.status})`);
-  return data.reactions;
-}
-
-export async function askClaude(
-  path: string,
-  line: number,
-  code: string,
-  question: string,
-): Promise<{ answer: string }> {
-  const res = await fetch("/api/ask", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, line, code, question }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? `Ask failed (${res.status})`);
-  return data;
-}
+export const useApi = () => useContext(ApiContext);

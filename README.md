@@ -66,6 +66,7 @@ Options:
 
 | Flag         | Description                                  |
 |--------------|----------------------------------------------|
+| `--queue`    | Review every PR/MR requesting your review, one after another |
 | `--port <n>` | Bind a specific port (default: free port)    |
 | `--no-open`  | Don't open the browser automatically         |
 | `-h`         | Help                                         |
@@ -75,6 +76,14 @@ Existing reviewer comments are shown inline (read-only). Hover a line and click 
 comment icon to draft your own note. Click **Submit review** to post all comments at
 once as a single review, choosing a verdict — **Comment**, **Approve**, or **Request
 changes** — with an optional overall summary.
+
+### Reviewing a queue
+
+`reviewer --queue` (or `a` in the picker) opens every open PR/MR that requests
+your review on one page. A bar on top lists them. The first one shows up right
+away, and the next ones fetch and group in the background while you review.
+After submitting, **Next review** jumps to the next one still waiting.
+Drafts stay put when you switch between PRs.
 
 ### Refreshing a review
 
