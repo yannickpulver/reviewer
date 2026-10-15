@@ -1,0 +1,661 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
+import type { BuildingState, BuildStep, Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
+import { ApiContext, createApi } from "./api";
+import { indexHunks, lineKey, remapDrafts, searchFiles } from "./lib/diff";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Sidebar, type ArchitectState } from "./components/Sidebar";
+import { SectionContent, fileBlockId } from "./components/SectionContent";
+import { SearchContent } from "./components/SearchContent";
+import type { ArchitectApi, ArchitectFindingView, CommentsApi, ExistingLookup } from "./components/DiffView";
+
+interface ReviewProps {
+  /** Which queued review this is; its API lives under `/api/s/<slot>/`. */
+  slot: number;
+  /** False while another review of the queue is on screen. */
+  visible: boolean;
+  onSubmitted?: () => void;
+  /** Jump to the next review of the queue, if there is one. */
+  onNext?: () => void;
+}
+
+export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
+  const api = useMemo(() => createApi(slot), [slot]);
+  const [payload, setPayload] = useState<ReviewPayload | null>(null);
+  const [building, setBuilding] = useState<BuildingState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [comments, setComments] = useState<Record<string, ReviewComment>>({});
+  const [active, setActive] = useState(0);
+  const [reviewed, setReviewed] = useState<Set<number>>(new Set());
+  const [summary, setSummary] = useState("");
+  const [action, setAction] = useState<ReviewAction>("comment");
+  const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState<string | null>(null);
+  const [verdict, setVerdict] = useState<ReviewAction | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [detached, setDetached] = useState<ReviewComment[]>([]);
+
+  const [search, setSearch] = useState("");
+
+  const [architect, setArchitect] = useState<ArchitectState>({ status: "idle" });
+  const [adoptedFindings, setAdoptedFindings] = useState<Set<number>>(new Set());
+  const [dismissedFindings, setDismissedFindings] = useState<Set<number>>(new Set());
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  // The "r" shortcut binds once; route it through a ref so it always calls the
+  // current closure rather than the one from first render.
+  const doRefreshRef = useRef<(() => void) | null>(null);
+  // Same trick for the poll loop, which needs the current sections to move the
+  // reviewed/active markers onto a freshly grouped payload.
+  const applyPayloadRef = useRef<((next: ReviewPayload) => void) | null>(null);
+  // Every mounted review listens for shortcuts; only the visible one acts.
+  const visibleRef = useRef(visible);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
+    let started = false;
+    const MAX_FAILURES = 5;
+    async function poll() {
+      try {
+        const data = await api.getReview();
+        if (cancelled) return;
+        failures = 0;
+        if (data.status === "building") {
+          setBuilding(data);
+          timer = setTimeout(poll, 700);
+        } else if (data.status === "error") {
+          setError(data.message);
+        } else {
+          applyPayloadRef.current?.(data);
+          if (!started) {
+            started = true;
+            if (data.architectStarted) runArchitect();
+          }
+          // The grouping arrives after the diff — keep polling until it lands.
+          if (data.groupingPending) timer = setTimeout(poll, 700);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        failures++;
+        if (failures >= MAX_FAILURES) {
+          setError((e as Error).message);
+        } else {
+          timer = setTimeout(poll, 700);
+        }
+      }
+    }
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  // Scroll back to the top whenever the active section changes.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [active]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!visibleRef.current) return;
+      if ((e.key !== "r" && e.key !== "/") || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest("input, textarea, [contenteditable=true]")) return;
+      e.preventDefault();
+      if (e.key === "/") searchRef.current?.focus();
+      else doRefreshRef.current?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    doRefreshRef.current = doRefresh;
+    applyPayloadRef.current = applyPayload;
+    visibleRef.current = visible;
+  });
+
+  const commentsApi: CommentsApi = useMemo(
+    () => ({
+      get: (path, line) => comments[lineKey(path, line)]?.body,
+      save: (path, line, body) =>
+        setComments((prev) => ({ ...prev, [lineKey(path, line)]: { path, line, body } })),
+      remove: (path, line) =>
+        setComments((prev) => {
+          const next = { ...prev };
+          delete next[lineKey(path, line)];
+          return next;
+        }),
+    }),
+    [comments],
+  );
+
+  const index = useMemo(() => (payload ? indexHunks(payload.files) : new Map()), [payload]);
+
+  const query = search.trim();
+  const searchResults = useMemo(
+    () => (payload && query ? searchFiles(payload.files, query) : []),
+    [payload, query],
+  );
+
+  /** Bring a file's diff block into view inside the scroll container. */
+  function selectFile(path: string) {
+    document.getElementById(fileBlockId(path))?.scrollIntoView({ block: "start" });
+  }
+
+  const existingByLine = useMemo(() => {
+    const m = new Map<string, ReviewPayload["existingComments"]>();
+    for (const c of payload?.existingComments ?? []) {
+      const k = lineKey(c.path, c.line);
+      const arr = m.get(k) ?? [];
+      arr.push(c);
+      m.set(k, arr);
+    }
+    return m;
+  }, [payload]);
+
+  const existingLookup: ExistingLookup = (path, line) =>
+    existingByLine.get(lineKey(path, line)) ?? [];
+
+  const liveFindings = useMemo<ArchitectFindingView[]>(
+    () =>
+      architect.status === "done"
+        ? architect.review.findings
+            .map((f, id) => ({ ...f, id }))
+            .filter((f) => !adoptedFindings.has(f.id) && !dismissedFindings.has(f.id))
+        : [],
+    [architect, adoptedFindings, dismissedFindings],
+  );
+
+  const findingsByLine = useMemo(() => {
+    const m = new Map<string, ArchitectFindingView[]>();
+    for (const f of liveFindings) {
+      if (!f.anchored) continue;
+      const k = lineKey(f.path, f.line);
+      const arr = m.get(k) ?? [];
+      arr.push(f);
+      m.set(k, arr);
+    }
+    return m;
+  }, [liveFindings]);
+
+  const architectApi: ArchitectApi = useMemo(
+    () => ({
+      get: (path, line) => findingsByLine.get(lineKey(path, line)) ?? [],
+      adopt: (finding) => {
+        const body = finding.fix
+          ? `${finding.comment}\n\n**Suggested fix:** ${finding.fix}`
+          : finding.comment;
+        setComments((prev) => {
+          const key = lineKey(finding.path, finding.line);
+          // Append to an existing draft on the same line instead of overwriting it.
+          const merged = prev[key] ? `${prev[key].body}\n\n${body}` : body;
+          return { ...prev, [key]: { path: finding.path, line: finding.line, body: merged } };
+        });
+        setAdoptedFindings((prev) => new Set(prev).add(finding.id));
+      },
+      dismiss: (finding) => setDismissedFindings((prev) => new Set(prev).add(finding.id)),
+    }),
+    [findingsByLine],
+  );
+
+  async function runArchitect(force = false, keepDecisions = false) {
+    setArchitect({ status: "loading" });
+    try {
+      const review = await api.runArchitectReview(force);
+      setArchitect({ status: "done", review });
+      if (keepDecisions) return; // refresh re-anchors findings in place, order unchanged
+      setAdoptedFindings(new Set());
+      setDismissedFindings(new Set());
+    } catch (e) {
+      setArchitect({ status: "error", message: (e as Error).message });
+    }
+  }
+
+  const sections: Group[] = useMemo(() => (payload ? sectionsOf(payload) : []), [payload]);
+
+  /**
+   * Adopt a new payload (Claude's grouping landing, or a refresh) while keeping
+   * the reviewed/active markers on the sections they belong to.
+   */
+  function applyPayload(next: ReviewPayload) {
+    if (!payload) {
+      setPayload(next);
+      return;
+    }
+    // Nothing new: same diff, still (or no longer) waiting on the same grouping.
+    if (next.rev === payload.rev && !next.groupingPending === !payload.groupingPending) return;
+    const marks = remapSections(sections, sectionsOf(next), reviewed, active);
+    setReviewed(marks.reviewed);
+    setActive(marks.active);
+    setPayload(next);
+  }
+
+  /**
+   * Pull the diff again (local worktree when it is this branch, host otherwise)
+   * and move the review onto it: sections keep their reviewed state by title,
+   * drafts follow their lines, architect findings re-anchor server-side.
+   */
+  async function doRefresh() {
+    if (!payload || refreshing) return;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const { payload: next, lineMap } = await api.refreshReview();
+
+      const { moved, detached: lost } = remapDrafts(comments, lineMap);
+      setComments(moved);
+      if (lost.length > 0) setDetached((prev) => [...prev, ...lost]);
+
+      applyPayload(next);
+      if (architect.status === "done") runArchitect(false, true);
+    } catch (e) {
+      setRefreshError((e as Error).message);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const commentList = Object.values(comments);
+
+  const sectionKeys = useMemo(
+    () =>
+      sections.map((s) => {
+        const keys = new Set<string>();
+        for (const ref of s.hunks) {
+          const resolved = index.get(ref);
+          if (!resolved) continue;
+          for (const l of resolved.hunk.lines) {
+            if (l.newLineNo !== null) keys.add(lineKey(resolved.path, l.newLineNo));
+          }
+        }
+        return keys;
+      }),
+    [sections, index],
+  );
+
+  const counts = sectionKeys.map(
+    (keys) => commentList.filter((c) => keys.has(lineKey(c.path, c.line))).length,
+  );
+
+  const existingCounts = useMemo(
+    () =>
+      sectionKeys.map(
+        (keys) =>
+          (payload?.existingComments ?? []).filter((c) => keys.has(lineKey(c.path, c.line))).length,
+      ),
+    [sectionKeys, payload],
+  );
+
+  // Maps a diff line (path:line) to the first section that contains it. sectionKeys
+  // is built by resolving each section's hunk refs through the same index blocksForRefs
+  // uses, so this gives the same section a finding's inline card would render in.
+  const sectionIndexByLineKey = useMemo(() => {
+    const m = new Map<string, number>();
+    sectionKeys.forEach((keys, i) => {
+      for (const k of keys) if (!m.has(k)) m.set(k, i);
+    });
+    return m;
+  }, [sectionKeys]);
+
+  function selectFinding(finding: ArchitectFindingView) {
+    const sectionIdx = sectionIndexByLineKey.get(lineKey(finding.path, finding.line));
+    if (sectionIdx === undefined) return;
+    setActive(sectionIdx);
+    setTimeout(() => {
+      const el = document.getElementById(`finding-${finding.id}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("ring-2", "ring-primary");
+      setTimeout(() => el.classList.remove("ring-2", "ring-primary"), 1500);
+    }, 50);
+  }
+
+  async function doSubmit() {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const { url } = await api.submitReview(commentList, summary, action);
+      setSubmitted(url);
+      setVerdict(action);
+      setConfirming(false);
+      onSubmitted?.();
+    } catch (e) {
+      setSubmitError((e as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (error) return <Centered>⚠️ {error}</Centered>;
+  if (!payload) {
+    return building ? (
+      <BuildingPanel state={building} />
+    ) : (
+      <Centered>
+        <Loader2 className="size-5 animate-spin" /> Loading review…
+      </Centered>
+    );
+  }
+
+  const current = sections[active];
+  // A local refresh shows commits the host doesn't have yet, so inline comments
+  // would anchor to lines that don't exist at meta.headSha.
+  const unpushed =
+    payload.refresh?.source === "local" ? payload.refresh.ahead : 0;
+
+  const toggleReviewed = (i: number) => {
+    const willReview = !reviewed.has(i);
+    setReviewed((prev) => {
+      const next = new Set(prev);
+      willReview ? next.add(i) : next.delete(i);
+      return next;
+    });
+    // Advance to the next section when marking one reviewed.
+    if (willReview && i + 1 < sections.length) setActive(i + 1);
+  };
+
+  return (
+    <ApiContext.Provider value={api}>
+      <div className="flex h-full overflow-hidden">
+        <Sidebar
+          meta={payload.meta}
+          diffScope={payload.diffScope}
+          sections={sections}
+          groupingPending={!!payload.groupingPending}
+          verdict={verdict}
+          active={active}
+          counts={counts}
+          existingCounts={existingCounts}
+          reviewed={reviewed}
+          onSelect={setActive}
+          architect={architect}
+          onRunArchitectReview={runArchitect}
+          liveFindings={liveFindings}
+          onSelectFinding={selectFinding}
+          refresh={payload.refresh}
+          refreshing={refreshing}
+          refreshError={refreshError}
+          onRefresh={doRefresh}
+          search={search}
+          onSearchChange={setSearch}
+          searchResults={searchResults}
+          onSelectFile={selectFile}
+          searchRef={searchRef}
+        />
+
+        <main className="flex flex-1 flex-col overflow-hidden">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 pb-6">
+            {query ? (
+              <SearchContent
+                query={query}
+                results={searchResults}
+                meta={payload.meta}
+                index={index}
+                comments={commentsApi}
+                existing={existingLookup}
+                architect={architectApi}
+                reactionsSupported={payload.reactionsSupported}
+              />
+            ) : current ? (
+              <SectionContent
+                section={current}
+                meta={payload.meta}
+                index={index}
+                comments={commentsApi}
+                existing={existingLookup}
+                architect={architectApi}
+                reactionsSupported={payload.reactionsSupported}
+                reviewed={reviewed.has(active)}
+                onToggleReviewed={() => toggleReviewed(active)}
+              />
+            ) : (
+              <p className="text-muted-foreground">No changes.</p>
+            )}
+          </div>
+
+          {payload.meta.host === "local" ? (
+            <LocalBar count={commentList.length} />
+          ) : (
+            <SubmitBar
+              count={commentList.length}
+              detached={detached.length}
+              unpushed={unpushed}
+              onSubmit={() => setConfirming(true)}
+              submitted={submitted}
+              onNext={onNext}
+            />
+          )}
+        </main>
+
+        {confirming && (
+          <ConfirmDialog
+            count={commentList.length}
+            summary={summary}
+            setSummary={setSummary}
+            action={action}
+            setAction={setAction}
+            submitting={submitting}
+            error={submitError}
+            onConfirm={doSubmit}
+            onCancel={() => setConfirming(false)}
+          />
+        )}
+      </div>
+    </ApiContext.Provider>
+  );
+}
+
+function SubmitBar({
+  count,
+  detached,
+  unpushed,
+  onSubmit,
+  submitted,
+  onNext,
+}: {
+  count: number;
+  detached: number;
+  unpushed: number;
+  onSubmit: () => void;
+  submitted: string | null;
+  onNext?: () => void;
+}) {
+  return (
+    <div className="border-t bg-background/95 px-6 py-3 backdrop-blur">
+      <div className="flex items-center gap-3">
+        {submitted ? (
+          <>
+            <a
+              href={submitted}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 text-sm text-emerald-600 hover:underline"
+            >
+              <CheckCircle2 className="size-4" /> Review submitted — view on host
+              <ExternalLink className="size-3.5" />
+            </a>
+            {onNext && (
+              <Button className="ml-auto" onClick={onNext}>
+                Next review <ArrowRight className="size-4" />
+              </Button>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="text-sm text-muted-foreground">
+              {count} pending comment{count === 1 ? "" : "s"}
+              {detached > 0 && (
+                <span className="text-amber-600">
+                  {" "}
+                  · {detached} lost its line after a refresh
+                </span>
+              )}
+            </span>
+            {unpushed > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {unpushed} unpushed commit{unpushed === 1 ? "" : "s"} — push to submit
+              </span>
+            )}
+            <Button className="ml-auto" onClick={onSubmit} disabled={unpushed > 0}>
+              Submit review
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LocalBar({ count }: { count: number }) {
+  return (
+    <div className="border-t bg-background/95 px-6 py-3 text-sm text-muted-foreground backdrop-blur">
+      Local branch review — read-only
+      {count > 0 && `, ${count} note${count === 1 ? "" : "s"} (not submittable)`}
+    </div>
+  );
+}
+
+const ACTIONS: { value: ReviewAction; label: string; hint: string }[] = [
+  { value: "comment", label: "Comment", hint: "Leave feedback without an explicit verdict." },
+  { value: "approve", label: "Approve", hint: "Approve the changes." },
+  { value: "request_changes", label: "Request changes", hint: "Ask for changes before merge." },
+];
+
+function ConfirmDialog({
+  count,
+  summary,
+  setSummary,
+  action,
+  setAction,
+  submitting,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  count: number;
+  summary: string;
+  setSummary: (s: string) => void;
+  action: ReviewAction;
+  setAction: (a: ReviewAction) => void;
+  submitting: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  // A plain "comment" review needs at least one comment or a summary.
+  const blocked = action === "comment" && count === 0 && !summary.trim();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md space-y-4 rounded-lg border bg-card p-5 shadow-xl">
+        <h2 className="text-lg font-semibold">Submit review</h2>
+        <p className="text-sm text-muted-foreground">
+          {count} inline comment{count === 1 ? "" : "s"} will be posted as a single review.
+        </p>
+
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">Verdict</label>
+          <div className="grid grid-cols-3 gap-2">
+            {ACTIONS.map((a) => (
+              <button
+                key={a.value}
+                onClick={() => setAction(a.value)}
+                className={cn(
+                  "rounded-md border px-2 py-2 text-xs font-medium transition-colors",
+                  action === a.value
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "hover:bg-muted",
+                )}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {ACTIONS.find((a) => a.value === action)!.hint}
+          </p>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Overall summary (optional)</label>
+          <Textarea
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            placeholder="Summary comment for the whole review…"
+          />
+        </div>
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} disabled={submitting || blocked}>
+            {submitting && <Loader2 className="size-4 animate-spin" />}
+            {ACTIONS.find((a) => a.value === action)!.label}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const BUILD_STEPS: Record<BuildStep, string> = {
+  fetching: "Fetching diff",
+};
+
+function BuildingPanel({ state }: { state: BuildingState }) {
+  return (
+    <Centered>
+      <Loader2 className="size-4 animate-spin" />
+      <span className="text-sm">{BUILD_STEPS[state.step]}…</span>
+    </Centered>
+  );
+}
+
+/** Move the reviewed/active markers onto a new set of sections, matching by title. */
+function remapSections(
+  prev: Group[],
+  next: Group[],
+  reviewed: Set<number>,
+  active: number,
+): { reviewed: Set<number>; active: number } {
+  const reviewedTitles = new Set([...reviewed].map((i) => prev[i]?.title).filter(Boolean));
+  const nextActive = next.findIndex((s) => s.title === prev[active]?.title);
+  return {
+    reviewed: new Set(next.flatMap((s, i) => (reviewedTitles.has(s.title) ? [i] : []))),
+    active: nextActive >= 0 ? nextActive : 0,
+  };
+}
+
+/** Sidebar sections: the groups, plus a trailing catch-all for ungrouped hunks. */
+function sectionsOf(payload: ReviewPayload): Group[] {
+  const list = [...payload.grouping.groups];
+  if (payload.grouping.ungrouped.length > 0) {
+    list.push({
+      title: "Ungrouped",
+      importance: "low",
+      summary: "Changes not assigned to a group.",
+      hunks: payload.grouping.ungrouped,
+    });
+  }
+  return list;
+}
+
+export function Centered({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-full items-center justify-center gap-2 text-muted-foreground">
+      {children}
+    </div>
+  );
+}

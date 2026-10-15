@@ -16,7 +16,7 @@ import type {
   Hunk,
   Reaction,
 } from "@/types";
-import { toggleReaction } from "@/api";
+import { useApi } from "@/api";
 import { cn } from "@/lib/utils";
 import { hunkToText, lineKey } from "@/lib/diff";
 import { highlightBlock, langForPath } from "@/lib/highlight";
@@ -486,6 +486,7 @@ function ReactionBar({ comment }: { comment: ExistingComment }) {
   const [reactions, setReactions] = useState<Reaction[]>(comment.reactions ?? []);
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
+  const { toggleReaction } = useApi();
 
   const toggle = async (content: string) => {
     if (busy) return;

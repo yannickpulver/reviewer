@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import { askClaude } from "@/api";
+import { useApi } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./Markdown";
@@ -17,6 +17,7 @@ export function AskBox({ path, line, code, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { askClaude } = useApi();
 
   async function ask() {
     const q = question.trim();

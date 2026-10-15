@@ -102,7 +102,7 @@ export function Sidebar({
 }: Props) {
   const searching = search.trim().length > 0;
   return (
-    <aside className="flex h-screen w-80 shrink-0 flex-col border-r bg-card">
+    <aside className="flex h-full w-80 shrink-0 flex-col border-r bg-card">
       <div className="space-y-1 border-b px-4 py-4">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <GitPullRequest className="size-3.5" />

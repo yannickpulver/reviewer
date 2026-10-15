@@ -96,6 +96,21 @@ export interface RefreshResponse {
 
 export type BuildStep = "fetching";
 
+/** Where a queued review is in its pipeline. */
+export type QueueStatus = "fetching" | "grouping" | "ready" | "error";
+
+/** One PR/MR of GET /api/queue. */
+export interface QueueEntry {
+  /** Index into the queue; the review's API lives under `/api/s/<slot>/`. */
+  slot: number;
+  id: number;
+  title: string;
+  author: string;
+  status: QueueStatus;
+  /** URL of the review posted from this session, once submitted. */
+  submitted?: string;
+}
+
 export interface BuildingState {
   status: "building";
   step: BuildStep;
