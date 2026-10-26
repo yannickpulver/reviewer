@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { GitHubHost } from "./github.js";
 import type { Runner } from "../util/exec.js";
 
@@ -140,5 +140,30 @@ describe("GitHubHost on Enterprise", () => {
     const api = calls.find((c) => c.includes("api"))!;
     expect(api).not.toContain("--hostname");
     expect(api).toContain("repos/org/repo/pulls/7/reviews");
+  });
+});
+
+describe("GitHubHost.fetchImage", () => {
+  it("loads an attachment through its signed URL from the rendered description", async () => {
+    const signed = "https://objects.acme.ghe.com/assets/1-abc-123.png?X-Amz-Expires=300&sig=x";
+    const { run, calls } = recorder({
+      "pulls/7": `<p><img width="440" src="${signed.replace("&", "&amp;")}"></p>`,
+    });
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array([1, 2]), {
+      headers: { "content-type": "image/png" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const host = new GitHubHost(7, "acme.ghe.com/acme/widgets", run);
+      const img = await host.fetchImage("https://acme.ghe.com/user-attachments/assets/abc-123");
+      expect(fetchMock).toHaveBeenCalledWith(signed);
+      expect(img?.type).toBe("image/png");
+      expect(calls.find((c) => c.includes("repos/acme/widgets/pulls/7"))).toContain("--hostname");
+
+      // other hosts aren't proxied
+      expect(await host.fetchImage("https://example.com/a.png")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

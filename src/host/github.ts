@@ -251,12 +251,36 @@ export class GitHubHost implements Host {
     }
   }
 
+  /** The API-rendered description; its image URLs are signed and expire after 5 minutes. */
+  private bodyHtml: { at: number; html: Promise<string> } | null = null;
+
+  private renderedBody(): Promise<string> {
+    if (!this.bodyHtml || Date.now() - this.bodyHtml.at > 4 * 60_000) {
+      const html = this.run("gh", [
+        "api", ...this.hostArgs(),
+        "-H", "Accept: application/vnd.github.html+json",
+        `repos/${this.ownerRepo}/pulls/${this.id}`,
+        "--jq", ".body_html",
+      ]).then((r) => r.stdout);
+      this.bodyHtml = { at: Date.now(), html };
+      html.catch(() => (this.bodyHtml = null));
+    }
+    return this.bodyHtml.html;
+  }
+
   async fetchImage(url: string): Promise<{ body: Uint8Array; type?: string } | null> {
-    // Attachments live on the web host and need the CLI's token (private repos
-    // 404 anonymously). Only send it there; other images load directly.
-    if (new URL(url).hostname !== (this.apiHost ?? "github.com")) return null;
-    const token = (await this.run("gh", ["auth", "token", ...this.hostArgs()])).stdout.trim();
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    // Attachments on private repos (and on GHE) don't load with a token. The
+    // rendered description carries a signed URL for each, named after the
+    // attachment's id. Other images load directly.
+    const u = new URL(url);
+    if (u.hostname !== (this.apiHost ?? "github.com")) return null;
+    const id = u.pathname.split("/").pop();
+    if (!id) return null;
+    const signed = [...(await this.renderedBody()).matchAll(/src="([^"]+)"/g)]
+      .map((m) => m[1]!.replaceAll("&amp;", "&"))
+      .find((src) => src.includes(id));
+    if (!signed) return null;
+    const res = await fetch(signed);
     if (!res.ok) throw new Error(`Image request failed (${res.status})`);
     return {
       body: new Uint8Array(await res.arrayBuffer()),
