@@ -23,7 +23,6 @@ interface Args {
   model?: string;
   local: boolean;
   base?: string;
-  sinceLastReview: boolean;
   architect: boolean;
   queue: boolean;
 }
@@ -35,7 +34,6 @@ function parseArgs(argv: string[]): Args {
   let model: string | undefined;
   let local = false;
   let base: string | undefined;
-  let sinceLastReview = false;
   let architect = false;
   let queue = false;
   for (let i = 0; i < argv.length; i++) {
@@ -45,7 +43,6 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--base") base = argv[++i];
     else if (a === "--port") port = Number(argv[++i]);
     else if (a === "--model") model = argv[++i];
-    else if (a === "--since-last-review") sinceLastReview = true;
     else if (a === "--architect") architect = true;
     else if (a === "--queue") queue = true;
     else if (a === "-h" || a === "--help") {
@@ -56,7 +53,7 @@ function parseArgs(argv: string[]): Args {
       process.exit(1);
     } else input = a;
   }
-  return { input, port, noOpen, model, local, base, sinceLastReview, architect, queue };
+  return { input, port, noOpen, model, local, base, architect, queue };
 }
 
 /**
@@ -185,27 +182,11 @@ Options:
   --base <ref>         base to diff against for --local (default: origin/HEAD, else main/master)
   --queue              open every PR/MR requesting your review; the next ones load
                        in the background while you review the current one
-  --since-last-review  only show changes since your last review (GitHub only)
   --architect          run the Claude architect review in parallel with grouping
   --port <n>           bind to a specific port (default: free ephemeral port)
   --model <name>       Claude model for grouping (e.g. sonnet, opus; default: sonnet)
   --no-open            don't open the browser automatically
   -h, --help           show this help`);
-}
-
-/**
- * Decide whether to fetch the full diff or just the changes since the
- * reviewer's last review. Skips the prompt (and the lookup) entirely when
- * the host doesn't support it (GitLab, local) or the flag was passed.
- */
-async function resolveSinceLastReview(host: Host, flagSet: boolean): Promise<boolean> {
-  if (flagSet) return true;
-  const last = await host.getLastReview?.();
-  if (!last) return false;
-  console.error("\n  1. full diff");
-  console.error(`  2. since your last review (${formatAge(last.submittedAt)} ago)`);
-  const ans = (await promptLine("Pick [1]: ")).trim();
-  return ans === "2";
 }
 
 /** How many reviews fetch + group at once; the rest wait their turn. */
@@ -221,12 +202,6 @@ async function main() {
       : args.input
         ? (console.error("→ Resolving PR/MR…"), [{ host: await resolveHost(args.input) }])
         : await pickOpenPull(args.base);
-
-  // The "since last review" question is per PR — a queue takes the flag as is.
-  const sinceLastReview =
-    items.length === 1
-      ? await resolveSinceLastReview(items[0]!.host, args.sinceLastReview)
-      : args.sinceLastReview;
 
   const server = await startServer(items, args.port, { model: args.model });
   const openLine = args.noOpen ? `\n  Review: ${server.url}` : `\n  Opening ${server.url}`;
@@ -247,7 +222,7 @@ async function main() {
       const slot = next++;
       const session = server.sessions[slot]!;
       const log = items.length > 1 ? prefixed(`[${slot + 1}/${items.length}]`) : console.error;
-      await runPipeline(items[slot]!.host, sinceLastReview, args, session, log).catch((err) => {
+      await runPipeline(items[slot]!.host, args, session, log).catch((err) => {
         log(`\n✖ ${(err as Error).message}`);
         session.setError((err as Error).message);
         if (items.length === 1) process.exitCode = 1;
@@ -263,19 +238,18 @@ function prefixed(prefix: string): (msg: string) => void {
 
 async function runPipeline(
   host: Host,
-  sinceLastReview: boolean,
   args: Args,
   server: SessionHandle,
   log: (msg: string) => void,
 ) {
   log("→ Fetching diff…");
   server.setProgress({ step: "fetching" });
-  const { meta, diffText, comments: existingComments, diffScope } = await host.fetch({
-    sinceLastReview,
-  });
-  if (diffScope === "since-last-review") {
-    log("  showing changes since your last review");
-  }
+  // The last review only offers "changes since your last review" in the UI —
+  // never block the review on it.
+  const [{ meta, diffText, comments: existingComments }, lastReview] = await Promise.all([
+    host.fetch(),
+    host.getLastReview?.().catch(() => null) ?? null,
+  ]);
 
   const diff = parseUnifiedDiff(diffText);
   const fileCount = diff.files.length;
@@ -299,7 +273,8 @@ async function runPipeline(
       files: diff.files,
       grouping: fallbackGrouping(diff, "Claude is still grouping the changes."),
       existingComments,
-      diffScope,
+      diffScope: "full",
+      ...(lastReview ? { lastReview } : {}),
       reactionsSupported: !!host.toggleReaction,
       architectStarted: args.architect,
       groupingPending: true,

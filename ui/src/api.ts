@@ -1,12 +1,14 @@
 import { createContext, useContext } from "react";
 import type {
   ArchitectReview,
+  DiffScope,
   QueueEntry,
   Reaction,
   RefreshResponse,
   ReviewAction,
   ReviewApiResponse,
   ReviewComment,
+  ReviewPayload,
 } from "./types";
 
 export async function getQueue(): Promise<QueueEntry[]> {
@@ -49,6 +51,10 @@ export function createApi(slot: number) {
     ): Promise<{ url: string }> => post("/review", "Submit", { comments, summary, action }),
 
     refreshReview: (): Promise<RefreshResponse> => post("/refresh", "Refresh"),
+
+    /** Show the whole PR/MR, or only what changed since your last review. */
+    setScope: async (scope: DiffScope): Promise<ReviewPayload> =>
+      (await post<{ payload: ReviewPayload }>("/scope", "Switch", { scope })).payload,
 
     runArchitectReview: (force = false): Promise<ArchitectReview> =>
       post(`/architect-review${force ? "?force=1" : ""}`, "Review"),

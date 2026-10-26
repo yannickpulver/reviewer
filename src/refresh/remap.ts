@@ -130,6 +130,29 @@ function hunkIdentities(files: DiffFile[]): { ref: string; path: string; key: st
   return out;
 }
 
+/**
+ * The hunks of `files` that weren't in `oldFiles` (same path and changed
+ * lines), e.g. what's new since your last review. Files left without hunks drop.
+ */
+export function newHunks(oldFiles: DiffFile[], files: DiffFile[]): DiffFile[] {
+  const old = new Set(hunkIdentities(oldFiles).map((h) => h.key));
+  const fresh = new Set(hunkIdentities(files).filter((h) => !old.has(h.key)).map((h) => h.ref));
+  return files
+    .map((f) => ({ ...f, hunks: f.hunks.filter((h) => fresh.has(`${f.path}:${h.id}`)) }))
+    .filter((f) => f.hunks.length > 0);
+}
+
+/** `grouping` restricted to the hunks still in `files`; empty groups drop. */
+export function keepHunks(grouping: Grouping, files: DiffFile[]): Grouping {
+  const refs = new Set(files.flatMap((f) => f.hunks.map((h) => `${f.path}:${h.id}`)));
+  return {
+    groups: grouping.groups
+      .map((g) => ({ ...g, hunks: g.hunks.filter((r) => refs.has(r)) }))
+      .filter((g) => g.hunks.length > 0),
+    ungrouped: grouping.ungrouped.filter((r) => refs.has(r)),
+  };
+}
+
 const UNGROUPED = -1;
 const FRESH = -2;
 

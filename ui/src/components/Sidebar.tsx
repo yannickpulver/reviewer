@@ -2,7 +2,6 @@ import {
   CheckCircle2,
   FileText,
   GitPullRequest,
-  History,
   Loader2,
   MessageSquare,
   RefreshCw,
@@ -13,7 +12,6 @@ import {
 } from "lucide-react";
 import type {
   ArchitectReview,
-  DiffScope,
   Group,
   PullMeta,
   PullState,
@@ -48,7 +46,8 @@ export type ArchitectState =
 
 interface Props {
   meta: PullMeta;
-  diffScope: DiffScope;
+  /** "All changes" vs. "Since your review", when you reviewed before. */
+  scopeSwitch?: React.ReactNode;
   sections: Group[];
   /** True while Claude is still grouping and `sections` is only the fallback. */
   groupingPending: boolean;
@@ -81,7 +80,7 @@ interface Props {
 
 export function Sidebar({
   meta,
-  diffScope,
+  scopeSwitch,
   sections,
   groupingPending,
   verdict,
@@ -143,11 +142,7 @@ export function Sidebar({
         <p className="font-mono text-xs text-muted-foreground">
           {meta.headRef} → {meta.baseRef}
         </p>
-        {diffScope === "since-last-review" && (
-          <p className="flex items-center gap-1 text-xs text-muted-foreground">
-            <History className="size-3" /> since your last review
-          </p>
-        )}
+        {scopeSwitch}
         {refreshError ? (
           <p className="text-xs text-red-600">{refreshError}</p>
         ) : (

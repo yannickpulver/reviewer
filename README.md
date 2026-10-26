@@ -76,6 +76,11 @@ including its images (loaded through `gh`/`glab`, so private attachments work),
 and the list of groups. Pick a group from the sidebar to view its diff in the main
 panel. Press `m` to mark the current group as reviewed and move to the next one
 (on the overview, `m` starts with the first group).
+
+Reviewed this PR before? A switch in the sidebar shows only what's new since
+your last review: the hunks that weren't in the PR's diff back then, so a merge
+of the base branch doesn't flood the view. Groups and drafts stay as they are,
+and switching back brings the whole PR again (GitHub only).
 Existing reviewer comments are shown inline (read-only). Hover a line and click the
 comment icon to draft your own note. Click **Submit review** to post all comments at
 once as a single review, choosing a verdict — **Comment**, **Approve**, or **Request

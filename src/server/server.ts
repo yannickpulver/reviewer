@@ -7,7 +7,14 @@ import type { DiffFile } from "../diff/types.js";
 import type { Grouping } from "../group/types.js";
 import type { Host } from "../host/types.js";
 import { refreshDiff } from "../refresh/localDiff.js";
-import { buildLineMap, carryGrouping, remapExisting, remapFindings } from "../refresh/remap.js";
+import {
+  buildLineMap,
+  carryGrouping,
+  keepHunks,
+  newHunks,
+  remapExisting,
+  remapFindings,
+} from "../refresh/remap.js";
 import { architectReview, type ArchitectReview } from "../review/architect.js";
 import { askClaude, type AskInput } from "./ask.js";
 import { findUiDist } from "./paths.js";
@@ -21,6 +28,7 @@ import type {
   RefreshSummary,
   ReviewApiResponse,
   ReviewPayload,
+  ScopeBody,
   SubmitBody,
 } from "./payload.js";
 
@@ -179,6 +187,27 @@ function createSession(host: Host, reviewOptions: ReviewOptions) {
   // The settled review, kept so a refresh can re-anchor its findings in place.
   let architectResult: ArchitectReview | null = null;
   let refreshing: Promise<RefreshResponse> | null = null;
+  let switching: Promise<ReviewPayload> | null = null;
+  // While showing only what's new since your last review, the whole diff is
+  // parked here, so switching back and refreshing work on the full review.
+  let fullView: { files: DiffFile[]; grouping: Grouping } | null = null;
+  // The PR/MR diff as of your last review — it never changes, so fetch it once.
+  let reviewedFiles: Promise<DiffFile[]> | null = null;
+
+  /** Cut a whole-diff payload down to the hunks new since your last review, parking the rest. */
+  async function sinceLastReview<T extends ReviewPayload>(full: T): Promise<T> {
+    if (!full.lastReview || !host.diffAt) throw new Error("No earlier review of yours to compare with.");
+    reviewedFiles ??= host
+      .diffAt(full.meta.baseRef, full.lastReview.sha)
+      .then((text) => parseUnifiedDiff(text).files)
+      .catch((err) => {
+        reviewedFiles = null; // let the next switch retry
+        throw err;
+      });
+    const files = newHunks(await reviewedFiles, full.files);
+    fullView = { files: full.files, grouping: full.grouping };
+    return { ...full, files, grouping: keepHunks(full.grouping, files), diffScope: "since-last-review" };
+  }
 
   const launchArchitect = (dt: string, files: DiffFile[]) => {
     architectPromise = architectReview(dt, files, reviewOptions.model)
@@ -203,6 +232,10 @@ function createSession(host: Host, reviewOptions: ReviewOptions) {
    * being recomputed. No Claude call.
    */
   async function doRefresh(prev: ReadyState): Promise<RefreshResponse> {
+    // Showing only what's new since your last review: refresh the whole review,
+    // then cut it down again.
+    const since = prev.diffScope === "since-last-review" && fullView !== null;
+    if (since) prev = { ...prev, ...fullView, diffScope: "full" };
     const refreshed = await refreshDiff(host, prev.meta);
     const diff = parseUnifiedDiff(refreshed.diffText);
     const lineMap = buildLineMap(prev.files, diff.files);
@@ -236,7 +269,7 @@ function createSession(host: Host, reviewOptions: ReviewOptions) {
     // marker on the live state — honour that rather than the snapshot we started
     // from, or the spinner would never go away.
     const pending = state.status === "ready" ? state.groupingPending : prev.groupingPending;
-    const payload: ReviewPayload = {
+    let payload: ReviewPayload = {
       ...rest,
       ...(pending ? { groupingPending: true } : {}),
       files: diff.files,
@@ -245,13 +278,53 @@ function createSession(host: Host, reviewOptions: ReviewOptions) {
       rev: prev.rev + 1,
       refresh: summary,
     };
+    if (since) payload = await sinceLastReview(payload);
 
     diffText = refreshed.diffText;
     state = { status: "ready", ...payload };
     return { payload, lineMap, summary };
   }
 
+  /**
+   * Switch between the whole PR/MR and only the hunks that are new since your
+   * last review. Same diff, same hunk ids — groups just narrow down, and
+   * switching back restores them as they were. No Claude call.
+   */
+  async function doSwitchScope(prev: ReadyState, scope: ScopeBody["scope"]): Promise<ReviewPayload> {
+    const { status: _status, ...rest } = prev;
+    if (scope === prev.diffScope) return rest;
+    let payload: ReviewPayload;
+    if (scope === "full") {
+      payload = { ...rest, ...(fullView ?? {}), diffScope: "full" };
+      fullView = null;
+    } else {
+      payload = await sinceLastReview(rest);
+    }
+    payload = { ...payload, rev: prev.rev + 1 };
+    state = { status: "ready", ...payload };
+    return payload;
+  }
+
   app.get("/review", (c) => c.json(state));
+
+  app.post("/scope", async (c) => {
+    if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
+    // A grouping landing after the switch would be dropped as stale.
+    if (state.groupingPending) return c.json({ error: "Wait until grouping finishes" }, 409);
+    if (refreshing) return c.json({ error: "A refresh is running" }, 409);
+    const body = (await c.req.json()) as Partial<ScopeBody>;
+    if (body.scope !== "full" && body.scope !== "since-last-review") {
+      return c.json({ error: "scope must be full or since-last-review" }, 400);
+    }
+    switching ??= doSwitchScope(state, body.scope).finally(() => {
+      switching = null;
+    });
+    try {
+      return c.json({ payload: await switching });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
 
   app.post("/review", async (c) => {
     if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
@@ -340,6 +413,7 @@ function createSession(host: Host, reviewOptions: ReviewOptions) {
 
   app.post("/refresh", async (c) => {
     if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
+    if (switching) return c.json({ error: "Switching the diff" }, 409);
     // Concurrent clicks share one run — refreshing twice would fight over `state`.
     refreshing ??= doRefresh(state).finally(() => {
       refreshing = null;

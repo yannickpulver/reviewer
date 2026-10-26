@@ -19,6 +19,8 @@ export interface ReviewPayload {
   existingComments: ExistingComment[];
   /** Whether the diff covers the whole PR/MR or just the changes since the reviewer's last review. */
   diffScope: DiffScope;
+  /** Your latest submitted review of this PR/MR, which POST /scope can diff from. */
+  lastReview?: LastReview;
   /** Whether the host supports POST /api/react. */
   reactionsSupported: boolean;
   /** True when the architect review was started alongside grouping (--architect). */
@@ -52,6 +54,17 @@ export interface RefreshResponse {
   /** Lets the UI move its drafted comments onto the refreshed diff. */
   lineMap: LineMap;
   summary: RefreshSummary;
+}
+
+export interface LastReview {
+  /** Commit the review was submitted on. */
+  sha: string;
+  submittedAt: string;
+}
+
+/** Body of POST /scope: which diff to show. */
+export interface ScopeBody {
+  scope: DiffScope;
 }
 
 /** Body of POST /api/react. */

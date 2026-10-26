@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
-import type { BuildingState, BuildStep, Group, ReviewAction, ReviewComment, ReviewPayload } from "./types";
+import type {
+  BuildingState,
+  BuildStep,
+  DiffScope,
+  Group,
+  ReviewAction,
+  ReviewComment,
+  ReviewPayload,
+} from "./types";
 import { ApiContext, createApi } from "./api";
 import { indexHunks, lineKey, remapDrafts, searchFiles } from "./lib/diff";
 import { cn } from "@/lib/utils";
@@ -10,6 +18,7 @@ import { Sidebar, type ArchitectState } from "./components/Sidebar";
 import { SectionContent, fileBlockId } from "./components/SectionContent";
 import { SearchContent } from "./components/SearchContent";
 import { Overview } from "./components/Overview";
+import { ScopeSwitch } from "./components/ScopeSwitch";
 import type { ArchitectApi, ArchitectFindingView, CommentsApi, ExistingLookup } from "./components/DiffView";
 
 interface ReviewProps {
@@ -43,6 +52,9 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [detached, setDetached] = useState<ReviewComment[]>([]);
+
+  const [switchingScope, setSwitchingScope] = useState(false);
+  const [scopeError, setScopeError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
 
@@ -272,6 +284,24 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
     }
   }
 
+  /**
+   * Show the whole PR/MR or only what changed since your last review. Both end
+   * at the same head commit, so drafts keep their lines.
+   */
+  async function switchScope(scope: DiffScope) {
+    if (!payload || switchingScope) return;
+    setSwitchingScope(true);
+    setScopeError(null);
+    try {
+      applyPayload(await api.setScope(scope));
+      if (architect.status === "done") runArchitect(false, true);
+    } catch (e) {
+      setScopeError((e as Error).message);
+    } finally {
+      setSwitchingScope(false);
+    }
+  }
+
   const commentList = Object.values(comments);
 
   const sectionKeys = useMemo(
@@ -357,6 +387,24 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
   const current = sections[active];
   // A local refresh shows commits the host doesn't have yet, so inline comments
   // would anchor to lines that don't exist at meta.headSha.
+  const scopeSwitch = payload.lastReview && (
+    <ScopeSwitch
+      scope={payload.diffScope}
+      lastReview={payload.lastReview}
+      headSha={payload.meta.headSha}
+      switching={switchingScope}
+      blocked={
+        payload.groupingPending
+          ? "Available once grouping finishes"
+          : refreshing
+            ? "Refreshing…"
+            : undefined
+      }
+      error={scopeError}
+      onChange={switchScope}
+    />
+  );
+
   const unpushed =
     payload.refresh?.source === "local" ? payload.refresh.ahead : 0;
 
@@ -389,7 +437,7 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
       <div className="flex h-full overflow-hidden">
         <Sidebar
           meta={payload.meta}
-          diffScope={payload.diffScope}
+          scopeSwitch={scopeSwitch}
           sections={sections}
           groupingPending={!!payload.groupingPending}
           verdict={verdict}
@@ -431,6 +479,7 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
             ) : overview ? (
               <Overview
                 meta={payload.meta}
+                scopeSwitch={scopeSwitch}
                 sections={sections}
                 groupingPending={!!payload.groupingPending}
                 reviewed={reviewed}
