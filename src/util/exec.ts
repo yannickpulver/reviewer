@@ -66,3 +66,19 @@ export const runCommand: Runner = (cmd, args, input) =>
     if (input !== undefined) child.stdin.end(input);
     else child.stdin.end();
   });
+
+/** Runs a command and returns its raw stdout, for binary output (e.g. `glab api` file downloads). */
+export function runBytes(cmd: string, args: string[]): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const out: Buffer[] = [];
+    const errOut: Buffer[] = [];
+    child.stdout.on("data", (d: Buffer) => out.push(d));
+    child.stderr.on("data", (d: Buffer) => errOut.push(d));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(Buffer.concat(out));
+      else reject(new Error(`\`${cmd} ${args.join(" ")}\` exited ${code}: ${Buffer.concat(errOut).toString().trim()}`));
+    });
+  });
+}

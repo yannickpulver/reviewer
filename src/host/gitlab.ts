@@ -1,4 +1,4 @@
-import type { Runner } from "../util/exec.js";
+import { runBytes, type Runner } from "../util/exec.js";
 import { currentLogin } from "./index.js";
 import type {
   ExistingComment,
@@ -49,6 +49,7 @@ function toReactions(awards: GlabAward[], me: string): Reaction[] {
 interface GlabMr {
   iid: number;
   title: string;
+  description: string | null;
   author: { username: string } | null;
   web_url: string;
   source_branch: string;
@@ -103,6 +104,7 @@ export class GitLabHost implements Host {
       headRef: mr.source_branch,
       headSha: mr.diff_refs?.head_sha ?? mr.sha,
       state: glState(mr),
+      description: mr.description ?? "",
     };
     return { meta, diffText: diff.stdout, comments: await this.fetchComments(), diffScope: "full" };
   }
@@ -161,6 +163,17 @@ export class GitLabHost implements Host {
       `projects/${this.projectPath}/merge_requests/${this.id}/notes/${noteId}/award_emoji`,
     ]);
     return JSON.parse(res.stdout) as GlabAward[];
+  }
+
+  async fetchImage(url: string): Promise<{ body: Uint8Array } | null> {
+    // Uploads (`/uploads/<secret>/<file>`) need auth on private projects; the
+    // API serves them to the CLI's token.
+    const m = new URL(url).pathname.match(/\/uploads\/([0-9a-f]{32})\/([^/]+)$/);
+    if (!m) return null;
+    const body = await runBytes("glab", [
+      "api", `projects/${this.projectPath}/uploads/${m[1]}/${m[2]}`,
+    ]);
+    return { body };
   }
 
   async toggleReaction(commentId: string, content: string, remove: boolean): Promise<Reaction[]> {

@@ -36,6 +36,7 @@ export class LocalHost implements Host {
       headRef,
       headSha,
       state: "open",
+      description: "",
     };
     return { meta, diffText: diff.stdout, comments: [], diffScope: "full" };
   }

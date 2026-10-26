@@ -62,6 +62,7 @@ function ghState(v: { state: string; isDraft: boolean }): PullState {
 interface GhView {
   number: number;
   title: string;
+  body: string | null;
   author: { login: string } | null;
   url: string;
   baseRefName: string;
@@ -104,7 +105,7 @@ export class GitHubHost implements Host {
     const view = await this.run("gh", [
       "pr", "view", String(this.id),
       "--repo", this.repo,
-      "--json", "number,title,author,url,baseRefName,headRefName,headRefOid,state,isDraft",
+      "--json", "number,title,body,author,url,baseRefName,headRefName,headRefOid,state,isDraft",
     ]);
     const v = JSON.parse(view.stdout) as GhView;
 
@@ -118,6 +119,7 @@ export class GitHubHost implements Host {
       headRef: v.headRefName,
       headSha: v.headRefOid,
       state: ghState(v),
+      description: v.body ?? "",
     };
 
     let diffText: string | undefined;
@@ -247,6 +249,19 @@ export class GitHubHost implements Host {
     } catch {
       return []; // comments are best-effort; never block the review
     }
+  }
+
+  async fetchImage(url: string): Promise<{ body: Uint8Array; type?: string } | null> {
+    // Attachments live on the web host and need the CLI's token (private repos
+    // 404 anonymously). Only send it there; other images load directly.
+    if (new URL(url).hostname !== (this.apiHost ?? "github.com")) return null;
+    const token = (await this.run("gh", ["auth", "token", ...this.hostArgs()])).stdout.trim();
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Image request failed (${res.status})`);
+    return {
+      body: new Uint8Array(await res.arrayBuffer()),
+      type: res.headers.get("content-type") ?? undefined,
+    };
   }
 
   async toggleReaction(commentId: string, content: string, remove: boolean): Promise<Reaction[]> {

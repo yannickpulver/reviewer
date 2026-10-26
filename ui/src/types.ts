@@ -53,6 +53,8 @@ export interface PullMeta {
   headRef: string;
   headSha: string;
   state: PullState;
+  /** PR/MR description as markdown; "" when there is none. */
+  description: string;
 }
 
 export type DiffScope = "full" | "since-last-review";

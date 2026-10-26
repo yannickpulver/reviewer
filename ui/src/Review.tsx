@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sidebar, type ArchitectState } from "./components/Sidebar";
 import { SectionContent, fileBlockId } from "./components/SectionContent";
 import { SearchContent } from "./components/SearchContent";
+import { Overview } from "./components/Overview";
 import type { ArchitectApi, ArchitectFindingView, CommentsApi, ExistingLookup } from "./components/DiffView";
 
 interface ReviewProps {
@@ -28,6 +29,8 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
   const [error, setError] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<string, ReviewComment>>({});
   const [active, setActive] = useState(0);
+  // Every review opens on the overview (description + groups) before the first group.
+  const [overview, setOverview] = useState(true);
   const [reviewed, setReviewed] = useState<Set<number>>(new Set());
   const [summary, setSummary] = useState("");
   const [action, setAction] = useState<ReviewAction>("comment");
@@ -52,6 +55,7 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
   // The "r" shortcut binds once; route it through a ref so it always calls the
   // current closure rather than the one from first render.
   const doRefreshRef = useRef<(() => void) | null>(null);
+  const markReviewedRef = useRef<(() => void) | null>(null);
   // Same trick for the poll loop, which needs the current sections to move the
   // reviewed/active markers onto a freshly grouped payload.
   const applyPayloadRef = useRef<((next: ReviewPayload) => void) | null>(null);
@@ -103,16 +107,17 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
   // Scroll back to the top whenever the active section changes.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [active]);
+  }, [active, overview]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!visibleRef.current) return;
-      if ((e.key !== "r" && e.key !== "/") || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!["r", "/", "m"].includes(e.key) || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
       if (el?.closest("input, textarea, [contenteditable=true]")) return;
       e.preventDefault();
       if (e.key === "/") searchRef.current?.focus();
+      else if (e.key === "m") markReviewedRef.current?.();
       else doRefreshRef.current?.();
     };
     window.addEventListener("keydown", onKey);
@@ -121,6 +126,7 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
 
   useEffect(() => {
     doRefreshRef.current = doRefresh;
+    markReviewedRef.current = markReviewed;
     applyPayloadRef.current = applyPayload;
     visibleRef.current = visible;
   });
@@ -311,7 +317,7 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
   function selectFinding(finding: ArchitectFindingView) {
     const sectionIdx = sectionIndexByLineKey.get(lineKey(finding.path, finding.line));
     if (sectionIdx === undefined) return;
-    setActive(sectionIdx);
+    selectSection(sectionIdx);
     setTimeout(() => {
       const el = document.getElementById(`finding-${finding.id}`);
       if (!el) return;
@@ -354,7 +360,20 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
   const unpushed =
     payload.refresh?.source === "local" ? payload.refresh.ahead : 0;
 
-  const toggleReviewed = (i: number) => {
+  function selectSection(i: number) {
+    setActive(i);
+    setOverview(false);
+  }
+
+  // The "m" shortcut: leave the overview for the first group, or mark the
+  // current group reviewed and move on.
+  function markReviewed() {
+    if (!payload || query || sections.length === 0) return;
+    if (overview) selectSection(0);
+    else toggleReviewed(active);
+  }
+
+  function toggleReviewed(i: number) {
     const willReview = !reviewed.has(i);
     setReviewed((prev) => {
       const next = new Set(prev);
@@ -363,7 +382,7 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
     });
     // Advance to the next section when marking one reviewed.
     if (willReview && i + 1 < sections.length) setActive(i + 1);
-  };
+  }
 
   return (
     <ApiContext.Provider value={api}>
@@ -378,7 +397,9 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
           counts={counts}
           existingCounts={existingCounts}
           reviewed={reviewed}
-          onSelect={setActive}
+          onSelect={selectSection}
+          overview={overview}
+          onShowOverview={() => setOverview(true)}
           architect={architect}
           onRunArchitectReview={runArchitect}
           liveFindings={liveFindings}
@@ -406,6 +427,14 @@ export function Review({ slot, visible, onSubmitted, onNext }: ReviewProps) {
                 existing={existingLookup}
                 architect={architectApi}
                 reactionsSupported={payload.reactionsSupported}
+              />
+            ) : overview ? (
+              <Overview
+                meta={payload.meta}
+                sections={sections}
+                groupingPending={!!payload.groupingPending}
+                reviewed={reviewed}
+                onSelect={selectSection}
               />
             ) : current ? (
               <SectionContent

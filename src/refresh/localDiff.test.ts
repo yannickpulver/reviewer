@@ -13,6 +13,7 @@ const META: PullMeta = {
   headRef: "feature",
   headSha: "PRHEAD",
   state: "open",
+  description: "",
 };
 
 const REMOTE_DIFF = "diff --git a/remote.ts b/remote.ts\n";

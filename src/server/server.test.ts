@@ -27,6 +27,7 @@ function readyState(rev: number, pending: boolean): ReadyState {
       headRef: "topic",
       headSha: "abc",
       state: "open",
+      description: "",
     },
     files: [],
     grouping: FALLBACK,

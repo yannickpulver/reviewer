@@ -15,6 +15,8 @@ export interface PullMeta {
   /** Head commit SHA — needed to anchor inline comments */
   headSha: string;
   state: PullState;
+  /** PR/MR description as markdown; "" when there is none. */
+  description: string;
 }
 
 /** A drafted inline comment, anchored to a line in the new (right) side of the diff. */
@@ -72,6 +74,11 @@ export interface Host {
   ): Promise<{ url: string }>;
   /** The current user's most recent submitted review (GitHub only), or null/undefined if unsupported/none. */
   getLastReview?(): Promise<{ sha: string; submittedAt: string } | null>;
+  /**
+   * Download an image from the PR/MR description with the CLI's credentials.
+   * Returns null when the URL isn't one this host serves.
+   */
+  fetchImage?(url: string): Promise<{ body: Uint8Array; type?: string } | null>;
   /** Add or remove an emoji reaction on an existing comment; returns the comment's updated reactions. */
   toggleReaction?(commentId: string, content: string, remove: boolean): Promise<Reaction[]>;
 }

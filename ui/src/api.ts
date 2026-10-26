@@ -33,6 +33,9 @@ export function createApi(slot: number) {
   }
 
   return {
+    /** Load a description image through the server, with the host CLI's credentials. */
+    imageUrl: (url: string) => `${base}/image?url=${encodeURIComponent(url)}`,
+
     async getReview(): Promise<ReviewApiResponse> {
       const res = await fetch(`${base}/review`);
       if (!res.ok) throw new Error(`Failed to load review (${res.status})`);
