@@ -71,7 +71,11 @@ Options:
 | `--no-open`  | Don't open the browser automatically         |
 | `-h`         | Help                                         |
 
-In the browser: pick a group from the sidebar to view its diff in the main panel.
+In the browser: each review opens on an **Overview** with the PR/MR description,
+including its images (loaded through `gh`/`glab`, so private attachments work),
+and the list of groups. Pick a group from the sidebar to view its diff in the main
+panel. Press `m` to mark the current group as reviewed and move to the next one
+(on the overview, `m` starts with the first group).
 Existing reviewer comments are shown inline (read-only). Hover a line and click the
 comment icon to draft your own note. Click **Submit review** to post all comments at
 once as a single review, choosing a verdict — **Comment**, **Approve**, or **Request

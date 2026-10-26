@@ -104,6 +104,7 @@ export function SectionContent({
             size="sm"
             className={cn("ml-auto", reviewed && "bg-emerald-600 hover:bg-emerald-700")}
             onClick={onToggleReviewed}
+            title="Mark as reviewed and go to the next group (m)"
           >
             <Check className="size-4" />
             {reviewed ? "Reviewed" : "Mark as reviewed"}

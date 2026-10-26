@@ -273,3 +273,15 @@ body {
 .dark .hljs-doctag {
   color: #8b949e;
 }
+.md img {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+.md details {
+  margin: 0.5em 0;
+}
+.md summary {
+  cursor: pointer;
+}

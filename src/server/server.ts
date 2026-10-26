@@ -32,6 +32,11 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
   ".ico": "image/x-icon",
   ".woff2": "font/woff2",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
 };
 
 export interface RunningServer {
@@ -259,6 +264,28 @@ function createSession(host: Host, reviewOptions: ReviewOptions) {
       const result = await host.postReview(body.comments, body.summary ?? "", action);
       submitted = result.url;
       return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
+
+  // Description images, fetched with the host CLI's credentials so private
+  // attachments load. Anything the host doesn't serve is a plain redirect.
+  app.get("/image", async (c) => {
+    const url = c.req.query("url") ?? "";
+    if (!/^https?:\/\//.test(url)) return c.json({ error: "url must be http(s)" }, 400);
+    try {
+      const img = await host.fetchImage?.(url);
+      if (!img) return c.redirect(url);
+      const ext = "." + (new URL(url).pathname.split(".").pop() ?? "").toLowerCase();
+      const type =
+        img.type && img.type !== "application/octet-stream"
+          ? img.type
+          : (MIME[ext] ?? "application/octet-stream");
+      return c.newResponse(new Uint8Array(img.body), 200, {
+        "Content-Type": type,
+        "Cache-Control": "private, max-age=3600",
+      });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 502);
     }

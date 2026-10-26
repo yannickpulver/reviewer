@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  FileText,
   GitPullRequest,
   History,
   Loader2,
@@ -58,6 +59,9 @@ interface Props {
   existingCounts: number[];
   reviewed: Set<number>;
   onSelect: (index: number) => void;
+  /** True while the overview page is shown instead of a section. */
+  overview: boolean;
+  onShowOverview: () => void;
   architect: ArchitectState;
   onRunArchitectReview: (force?: boolean) => void;
   liveFindings: ArchitectFindingView[];
@@ -86,6 +90,8 @@ export function Sidebar({
   existingCounts,
   reviewed,
   onSelect,
+  overview,
+  onShowOverview,
   architect,
   onRunArchitectReview,
   liveFindings,
@@ -218,6 +224,16 @@ export function Sidebar({
           )
         ) : (
           <>
+            <button
+              onClick={onShowOverview}
+              className={cn(
+                "mb-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors",
+                overview ? "bg-muted" : "hover:bg-muted/60",
+              )}
+            >
+              <FileText className="size-3.5 text-muted-foreground" />
+              Overview
+            </button>
             {groupingPending && (
               <div className="mb-1 flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
                 <Loader2 className="size-3.5 shrink-0 animate-spin" />
@@ -232,8 +248,8 @@ export function Sidebar({
                   onClick={() => onSelect(i)}
                   className={cn(
                     "mb-1 w-full rounded-md px-3 py-2 text-left transition-colors",
-                    i === active ? "bg-muted" : "hover:bg-muted/60",
-                    isReviewed && i !== active && "opacity-50",
+                    i === active && !overview ? "bg-muted" : "hover:bg-muted/60",
+                    isReviewed && (i !== active || overview) && "opacity-50",
                   )}
                 >
                   <div className="flex items-center gap-2">
