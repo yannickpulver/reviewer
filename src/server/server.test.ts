@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import type { Grouping } from "../group/types.js";
 import type { Host } from "../host/types.js";
 import { applyGrouping, queueEntry, startServer } from "./server.js";
-import type { QueueEntry, ReadyState } from "./payload.js";
+import type { QueueEntry, ReadyState, ReviewPayload } from "./payload.js";
+import { parseUnifiedDiff } from "../diff/parse.js";
 
 const FALLBACK: Grouping = {
   groups: [{ title: "All changes", importance: "medium", summary: "", hunks: ["a.ts:H0"] }],
@@ -139,6 +140,71 @@ describe("startServer with a queue", () => {
       const after = await getQueue();
       expect(after[1]!.submitted).toBe("https://pr/2");
       expect(after[0]!.submitted).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("POST /scope", () => {
+  const hunk = (path: string, line: string) =>
+    `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,1 +1,1 @@\n-old\n+${line}\n`;
+  // At your review b.ts already looked like this; a.ts changed since.
+  const REVIEWED = hunk("a.ts", "first a") + hunk("b.ts", "new b");
+  const NOW = hunk("a.ts", "second a") + hunk("b.ts", "new b");
+
+  it("narrows to the hunks new since your last review and restores the groups on the way back", async () => {
+    const asked: string[] = [];
+    const host: Host = {
+      kind: "github",
+      fetch: async () => {
+        throw new Error("not used");
+      },
+      diffAt: async (base, sha) => {
+        asked.push(`${base}...${sha}`);
+        return REVIEWED;
+      },
+      postReview: async () => ({ url: "" }),
+    };
+    const server = await startServer([{ host }]);
+    try {
+      const { status: _s, rev: _r, ...payload } = readyState(0, false);
+      const grouping: Grouping = {
+        groups: [
+          { title: "A", importance: "high", summary: "", hunks: ["a.ts:H0"] },
+          { title: "B", importance: "low", summary: "", hunks: ["b.ts:H0"] },
+        ],
+        ungrouped: [],
+      };
+      server.sessions[0]!.setPayload(
+        {
+          ...payload,
+          files: parseUnifiedDiff(NOW).files,
+          grouping,
+          lastReview: { sha: "reviewed", submittedAt: "2026-10-01T00:00:00Z" },
+        },
+        NOW,
+      );
+
+      const scope = async (s: string) =>
+        (await (
+          await fetch(`${server.url}/api/s/0/scope`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scope: s }),
+          })
+        ).json()) as { payload: ReviewPayload };
+
+      const since = (await scope("since-last-review")).payload;
+      expect(asked).toEqual(["main...reviewed"]);
+      expect(since.diffScope).toBe("since-last-review");
+      expect(since.files.map((f) => f.path)).toEqual(["a.ts"]);
+      expect(since.grouping.groups.map((g) => g.title)).toEqual(["A"]);
+
+      const full = (await scope("full")).payload;
+      expect(full.diffScope).toBe("full");
+      expect(full.grouping).toEqual(grouping);
+      expect(full.files.map((f) => f.path)).toEqual(["a.ts", "b.ts"]);
     } finally {
       await server.close();
     }

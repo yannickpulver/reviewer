@@ -101,7 +101,7 @@ export class GitHubHost implements Host {
     return this.apiHost ? ["--hostname", this.apiHost] : [];
   }
 
-  async fetch(opts?: { sinceLastReview?: boolean }): Promise<FetchResult> {
+  async fetch(): Promise<FetchResult> {
     const view = await this.run("gh", [
       "pr", "view", String(this.id),
       "--repo", this.repo,
@@ -122,33 +122,19 @@ export class GitHubHost implements Host {
       description: v.body ?? "",
     };
 
-    let diffText: string | undefined;
-    let diffScope: FetchResult["diffScope"] = "full";
-    if (opts?.sinceLastReview) {
-      const last = await this.getLastReview();
-      if (last) {
-        try {
-          const compare = await this.run("gh", [
-            "api", ...this.hostArgs(),
-            "-H", "Accept: application/vnd.github.v3.diff",
-            `repos/${this.ownerRepo}/compare/${last.sha}...${meta.headSha}`,
-          ]);
-          diffText = compare.stdout;
-          diffScope = "since-last-review";
-        } catch (e) {
-          console.error(
-            `  (could not fetch the diff since your last review: ${(e as Error).message}) — falling back to the full diff.`,
-          );
-        }
-      } else {
-        console.error("  (no previous review found) — showing the full diff.");
-      }
-    }
-    if (diffText === undefined) {
-      diffText = (await this.run("gh", ["pr", "diff", String(this.id), "--repo", this.repo])).stdout;
-    }
+    const diffText = (await this.run("gh", ["pr", "diff", String(this.id), "--repo", this.repo])).stdout;
+    return { meta, diffText, comments: await this.fetchComments() };
+  }
 
-    return { meta, diffText, comments: await this.fetchComments(), diffScope };
+  async diffAt(baseRef: string, sha: string): Promise<string> {
+    // Three dots diff from the merge base, so this is the PR's own diff at
+    // `sha`: later merges of the base don't leak in, rebases don't matter.
+    const res = await this.run("gh", [
+      "api", ...this.hostArgs(),
+      "-H", "Accept: application/vnd.github.v3.diff",
+      `repos/${this.ownerRepo}/compare/${encodeURIComponent(baseRef)}...${sha}`,
+    ]);
+    return res.stdout;
   }
 
   /** The current user's latest submitted (non-pending) review, or null if none/unavailable. */

@@ -52,7 +52,7 @@ export interface ExistingComment {
   reactions: Reaction[];
 }
 
-/** Whether the fetched diff covers the whole PR/MR or just the changes since the reviewer's last review. */
+/** Whether the review shows the whole PR/MR or just the hunks new since the reviewer's last review. */
 export type DiffScope = "full" | "since-last-review";
 
 export interface FetchResult {
@@ -61,12 +61,13 @@ export interface FetchResult {
   diffText: string;
   /** Inline comments already left by reviewers */
   comments: ExistingComment[];
-  diffScope: DiffScope;
 }
 
 export interface Host {
   kind: HostKind;
-  fetch(opts?: { sinceLastReview?: boolean }): Promise<FetchResult>;
+  fetch(): Promise<FetchResult>;
+  /** The PR/MR diff as it looked at `sha` (e.g. your last reviewed commit), against `baseRef`. */
+  diffAt?(baseRef: string, sha: string): Promise<string>;
   postReview(
     comments: ReviewComment[],
     summary: string,

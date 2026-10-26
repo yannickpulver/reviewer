@@ -9,6 +9,8 @@ import { Markdown } from "./Markdown";
 
 interface Props {
   meta: PullMeta;
+  /** "All changes" vs. "Since your review", when you reviewed before. */
+  scopeSwitch?: React.ReactNode;
   sections: Group[];
   groupingPending: boolean;
   reviewed: Set<number>;
@@ -16,7 +18,7 @@ interface Props {
 }
 
 /** First page of a review: the PR/MR description and the groups to go through. */
-export function Overview({ meta, sections, groupingPending, reviewed, onSelect }: Props) {
+export function Overview({ meta, scopeSwitch, sections, groupingPending, reviewed, onSelect }: Props) {
   const api = useApi();
   const description = cleanDescription(meta.description).trim();
 
@@ -49,6 +51,7 @@ export function Overview({ meta, sections, groupingPending, reviewed, onSelect }
             </a>
           )}
         </p>
+        {scopeSwitch && <div className="max-w-sm">{scopeSwitch}</div>}
       </div>
 
       {description ? (

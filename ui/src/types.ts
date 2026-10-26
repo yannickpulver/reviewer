@@ -59,12 +59,20 @@ export interface PullMeta {
 
 export type DiffScope = "full" | "since-last-review";
 
+export interface LastReview {
+  /** Commit the review was submitted on. */
+  sha: string;
+  submittedAt: string;
+}
+
 export interface ReviewPayload {
   meta: PullMeta;
   files: DiffFile[];
   grouping: Grouping;
   existingComments: ExistingComment[];
   diffScope: DiffScope;
+  /** Your latest submitted review of this PR/MR, if any. */
+  lastReview?: LastReview;
   reactionsSupported: boolean;
   architectStarted?: boolean;
   /** True while `grouping` is only a fallback and Claude's real grouping is still running. */
