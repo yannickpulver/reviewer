@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { Runner } from "../util/exec.js";
 import type { FetchResult, Host, PullMeta, ReviewComment, ReviewAction } from "./types.js";
 
@@ -39,6 +41,12 @@ export class LocalHost implements Host {
       description: "",
     };
     return { meta, diffText: diff.stdout, comments: [] };
+  }
+
+  /** The working tree is the reviewed side, uncommitted edits included, so `sha` is unused. */
+  async fileAt(path: string, _sha: string): Promise<string> {
+    const root = (await this.run("git", ["rev-parse", "--show-toplevel"])).stdout.trim();
+    return readFile(join(root, path), "utf8");
   }
 
   async postReview(

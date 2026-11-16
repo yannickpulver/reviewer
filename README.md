@@ -22,6 +22,7 @@ reviewer 42
  ├─ show the diff right away, all changes in one group
  ├─ claude -p  →  groups {title, importance, summary, hunks[]}  (chunked for big diffs)
  │   (the UI swaps the groups in as soon as Claude finishes)
+ ├─ ↑ / ↓ in a hunk header  →  loads the file and shows unchanged lines around it
  ├─ "Refresh"  →  re-diffs against your worktree (or the host) and carries
  │   the review over: groups, comments and findings keep their place
  └─ "Submit review"  →  posts batched inline comments via gh / glab

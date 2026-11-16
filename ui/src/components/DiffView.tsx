@@ -1,6 +1,10 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
+  ChevronDown,
   ChevronRight,
+  ChevronsUpDown,
+  ChevronUp,
+  Loader2,
   MessageSquarePlus,
   Pencil,
   SmilePlus,
@@ -13,12 +17,13 @@ import type {
   ArchitectSeverity,
   DiffLine,
   ExistingComment,
+  FileContext,
   Hunk,
   Reaction,
 } from "@/types";
 import { useApi } from "@/api";
 import { cn } from "@/lib/utils";
-import { hunkToText, lineKey } from "@/lib/diff";
+import { gapsAround, hunkToText, lineKey, revealedLines, type Gap, type Revealed } from "@/lib/diff";
 import { highlightBlock, langForPath } from "@/lib/highlight";
 import { Button } from "@/components/ui/button";
 import { AskBox } from "./AskBox";
@@ -65,6 +70,9 @@ function toggler(setter: React.Dispatch<React.SetStateAction<Set<string>>>) {
     });
 }
 
+/** Unchanged lines revealed per click, like GitHub. */
+const STEP = 20;
+
 export function DiffView({
   path,
   hunks,
@@ -80,30 +88,185 @@ export function DiffView({
   const toggleAsking = toggler(setAsking);
   const lang = useMemo(() => langForPath(path), [path]);
 
+  // Unchanged lines around the hunks, loaded on the first expand click.
+  const { getFile } = useApi();
+  const [file, setFile] = useState<FileContext | null>(null);
+  // The gap whose click is loading the file.
+  const [loading, setLoading] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<Revealed[]>([]);
+  // A refresh hands in new hunks: the file may have changed, start over.
+  const [shownHunks, setShownHunks] = useState(hunks);
+  if (shownHunks.length !== hunks.length || shownHunks.some((h, i) => h !== hunks[i])) {
+    setShownHunks(hunks);
+    setFile(null);
+    setLoadError(null);
+    setRevealed([]);
+  }
+
+  // Added and deleted files show the whole file already.
+  const expandable = !hunks.some(
+    (h) => (h.oldStart === 0 && h.oldLines === 0) || (h.newStart === 0 && h.newLines === 0),
+  );
+  // Until the file is loaded, assume every gap has lines and the file runs on.
+  const gaps = useMemo(
+    () =>
+      file
+        ? gapsAround(hunks, file.hunks, file.lines.length)
+        : gapsAround(hunks, hunks, Number.POSITIVE_INFINITY),
+    [file, hunks],
+  );
+  const fileHtml = useMemo(
+    () => (file ? highlightBlock(file.lines.join("\n"), lang) : []),
+    [file, lang],
+  );
+
+  const expand = (gap: number, dir: keyof Revealed, n: number) => {
+    setRevealed((prev) => {
+      const next = [...prev];
+      const cur = next[gap] ?? { down: 0, up: 0 };
+      next[gap] = { ...cur, [dir]: cur[dir] + n };
+      return next;
+    });
+    if (file || loading !== null) return;
+    setLoading(gap);
+    setLoadError(null);
+    getFile(path)
+      .then(setFile)
+      .catch((err: Error) => setLoadError(err.message))
+      .finally(() => setLoading(null));
+  };
+
+  const gapRows = (i: number) => (
+    <GapRows
+      gap={gaps[i]!}
+      revealed={revealed[i] ?? { down: 0, up: 0 }}
+      header={hunks[i]?.header ?? null}
+      first={i === 0}
+      expandable={expandable}
+      file={file}
+      fileHtml={fileHtml}
+      loading={loading === i}
+      error={loadError}
+      onExpand={(dir, n) => expand(i, dir, n)}
+    />
+  );
+
   return (
     <div className="overflow-x-auto rounded-md border bg-card">
       <table className="w-full border-collapse font-mono text-xs">
         <tbody>
           {hunks.map((hunk, hi) => (
-            <HunkRows
-              key={hunk.id}
-              path={path}
-              hunk={hunk}
-              lang={lang}
-              showSep={hi > 0}
-              editing={editing}
-              toggleEditing={toggleEditing}
-              asking={asking}
-              toggleAsking={toggleAsking}
-              comments={comments}
-              existing={existing}
-              architect={architect}
-              reactionsSupported={reactionsSupported}
-            />
+            <Fragment key={hunk.id}>
+              {gapRows(hi)}
+              <HunkRows
+                path={path}
+                hunk={hunk}
+                lang={lang}
+                editing={editing}
+                toggleEditing={toggleEditing}
+                asking={asking}
+                toggleAsking={toggleAsking}
+                comments={comments}
+                existing={existing}
+                architect={architect}
+                reactionsSupported={reactionsSupported}
+              />
+            </Fragment>
           ))}
+          {hunks.length > 0 && gapRows(hunks.length)}
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * The unchanged lines before a hunk (or after the last one): what's been
+ * revealed so far, and a row with the hunk header and GitHub-style expand
+ * buttons while lines stay hidden.
+ */
+function GapRows({
+  gap,
+  revealed,
+  header,
+  first,
+  expandable,
+  file,
+  fileHtml,
+  loading,
+  error,
+  onExpand,
+}: {
+  gap: Gap;
+  revealed: Revealed;
+  /** Header of the hunk below; null after the last hunk. */
+  header: string | null;
+  first: boolean;
+  expandable: boolean;
+  file: FileContext | null;
+  fileHtml: string[];
+  loading: boolean;
+  error: string | null;
+  onExpand: (dir: keyof Revealed, n: number) => void;
+}) {
+  const shown = revealedLines(gap, file ? revealed : { down: 0, up: 0 });
+  const canExpand = expandable && !error && shown.hidden > 0;
+  // A fully revealed gap reads as one continuous diff, like GitHub.
+  const showControl = canExpand || !!error || gap.split || (header !== null && first);
+  const allAtOnce = canExpand && !gap.split && shown.down && shown.up && shown.hidden <= STEP;
+
+  const row = (n: number, delta: number) => (
+    <tr key={n}>
+      <td className="w-12 select-none bg-muted/30 px-2 text-right text-muted-foreground">{n + delta}</td>
+      <td className="w-12 select-none bg-muted/30 px-2 text-right text-muted-foreground">{n}</td>
+      <td className="w-10" />
+      <td className="whitespace-pre-wrap px-2 py-0.5">
+        <span className="select-none text-muted-foreground"> </span>
+        <span dangerouslySetInnerHTML={{ __html: fileHtml[n - 1] ?? "" }} />
+      </td>
+    </tr>
+  );
+
+  const button = (label: string, icon: React.ReactNode, dir: keyof Revealed, n: number) => (
+    <button
+      aria-label={label}
+      title={label}
+      className="rounded px-1 hover:bg-muted hover:text-foreground"
+      onClick={() => onExpand(dir, n)}
+    >
+      {icon}
+    </button>
+  );
+
+  return (
+    <>
+      {gap.down && shown.top.map((n) => row(n, gap.down!.delta))}
+      {showControl && (
+        <tr className={cn("bg-muted/40 text-muted-foreground", !first && "border-t")}>
+          <td colSpan={3} className="select-none px-1 py-0.5">
+            <div className="flex items-center justify-center gap-0.5">
+              {loading && canExpand ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : allAtOnce ? (
+                button(`Show ${shown.hidden} hidden lines`, <ChevronsUpDown className="size-3.5" />, "down", shown.hidden)
+              ) : (
+                canExpand && (
+                  <>
+                    {shown.down && button(`Show ${STEP} more lines below`, <ChevronDown className="size-3.5" />, "down", STEP)}
+                    {shown.up && button(`Show ${STEP} more lines above`, <ChevronUp className="size-3.5" />, "up", STEP)}
+                  </>
+                )
+              )}
+            </div>
+          </td>
+          <td className="select-none px-2 py-1">
+            {error ? <span className="text-red-400">{error}</span> : header}
+          </td>
+        </tr>
+      )}
+      {gap.up && shown.bottom.map((n) => row(n, gap.up!.delta))}
+    </>
   );
 }
 
@@ -111,7 +274,6 @@ function HunkRows({
   path,
   hunk,
   lang,
-  showSep,
   editing,
   toggleEditing,
   asking,
@@ -124,7 +286,6 @@ function HunkRows({
   path: string;
   hunk: Hunk;
   lang: string | null;
-  showSep: boolean;
   editing: Set<string>;
   toggleEditing: (key: string, on: boolean) => void;
   asking: Set<string>;
@@ -141,11 +302,6 @@ function HunkRows({
   );
   return (
     <>
-      <tr className={cn("text-muted-foreground", showSep && "border-t")}>
-        <td colSpan={4} className="bg-muted/40 px-3 py-1 select-none">
-          {hunk.header}
-        </td>
-      </tr>
       {hunk.lines.map((line, i) => (
         <LineRow
           key={i}

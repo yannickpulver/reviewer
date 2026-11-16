@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import type {
   ArchitectReview,
   DiffScope,
+  FileContext,
   QueueEntry,
   Reaction,
   RefreshResponse,
@@ -49,6 +50,14 @@ export function createApi(slot: number) {
       summary: string,
       action: ReviewAction,
     ): Promise<{ url: string }> => post("/review", "Submit", { comments, summary, action }),
+
+    /** The file on the PR/MR side, to show unchanged lines around hunks. */
+    async getFile(path: string): Promise<FileContext> {
+      const res = await fetch(`${base}/file?path=${encodeURIComponent(path)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `Loading ${path} failed (${res.status})`);
+      return data;
+    },
 
     refreshReview: (): Promise<RefreshResponse> => post("/refresh", "Refresh"),
 
