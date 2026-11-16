@@ -20,6 +20,7 @@ import { askClaude, type AskInput } from "./ask.js";
 import { findUiDist } from "./paths.js";
 import type {
   BuildingState,
+  FileContext,
   QueueEntry,
   QueueStatus,
   ReactBody,
@@ -307,6 +308,38 @@ function createSession(host: Host, reviewOptions: ReviewOptions) {
 
   app.get("/review", (c) => c.json(state));
 
+  // Unchanged lines around hunks. Cached per rev: a refresh may change the file.
+  let fileCache = { rev: -1, files: new Map<string, Promise<string[]>>() };
+  app.get("/file", async (c) => {
+    if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
+    if (!host.fileAt) return c.json({ error: "Not supported for this host" }, 501);
+    const path = c.req.query("path") ?? "";
+    // Only files in the diff — the local host reads from disk.
+    const file = (fullView?.files ?? state.files).find((f) => f.path === path);
+    if (!file || file.binary || file.status === "deleted") {
+      return c.json({ error: "No such file in the diff" }, 404);
+    }
+    if (fileCache.rev !== state.rev) fileCache = { rev: state.rev, files: new Map() };
+    const cache = fileCache.files;
+    let lines = cache.get(path);
+    if (!lines) {
+      lines = host.fileAt(path, state.meta.headSha).then(splitLines);
+      lines.catch(() => cache.delete(path)); // let the next click retry
+      cache.set(path, lines);
+    }
+    try {
+      const body: FileContext = {
+        lines: await lines,
+        hunks: file.hunks.map(({ oldStart, oldLines, newStart, newLines }) => ({
+          oldStart, oldLines, newStart, newLines,
+        })),
+      };
+      return c.json(body);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
+
   app.post("/scope", async (c) => {
     if (state.status !== "ready") return c.json({ error: "Review not ready yet" }, 409);
     // A grouping landing after the switch would be dropped as stale.
@@ -453,6 +486,13 @@ function createSession(host: Host, reviewOptions: ReviewOptions) {
   };
 
   return { app, handle, state: () => state, submitted: () => submitted };
+}
+
+/** File text → lines, without the empty one after a trailing newline. */
+export function splitLines(text: string): string[] {
+  const lines = text.split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
 }
 
 async function serveAsset(

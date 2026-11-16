@@ -210,3 +210,41 @@ describe("POST /scope", () => {
     }
   });
 });
+
+describe("GET /file", () => {
+  const DIFF =
+    "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -2,1 +2,1 @@\n-old\n+new\n";
+
+  it("serves the file at head with the file's hunks, only for files in the diff", async () => {
+    const asked: string[] = [];
+    const host: Host = {
+      kind: "github",
+      fetch: async () => {
+        throw new Error("not used");
+      },
+      fileAt: async (path, sha) => {
+        asked.push(`${path}@${sha}`);
+        return "one\nnew\nthree\n";
+      },
+      postReview: async () => ({ url: "" }),
+    };
+    const server = await startServer([{ host }]);
+    try {
+      const { status: _s, rev: _r, ...payload } = readyState(0, false);
+      server.sessions[0]!.setPayload({ ...payload, files: parseUnifiedDiff(DIFF).files }, DIFF);
+
+      const get = (path: string) => fetch(`${server.url}/api/s/0/file?path=${encodeURIComponent(path)}`);
+      const res = await get("a.ts");
+      expect(await res.json()).toEqual({
+        lines: ["one", "new", "three"],
+        hunks: [{ oldStart: 2, oldLines: 1, newStart: 2, newLines: 1 }],
+      });
+      await get("a.ts");
+      expect(asked).toEqual(["a.ts@abc"]); // cached
+
+      expect((await get("../secrets.txt")).status).toBe(404);
+    } finally {
+      await server.close();
+    }
+  });
+});

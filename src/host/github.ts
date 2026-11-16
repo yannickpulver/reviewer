@@ -137,6 +137,15 @@ export class GitHubHost implements Host {
     return res.stdout;
   }
 
+  async fileAt(path: string, sha: string): Promise<string> {
+    const res = await this.run("gh", [
+      "api", ...this.hostArgs(),
+      "-H", "Accept: application/vnd.github.raw",
+      `repos/${this.ownerRepo}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${sha}`,
+    ]);
+    return res.stdout;
+  }
+
   /** The current user's latest submitted (non-pending) review, or null if none/unavailable. */
   async getLastReview(): Promise<{ sha: string; submittedAt: string } | null> {
     const me = await currentLogin("gh", ["api", "user", "--jq", ".login", ...this.hostArgs()], this.run);

@@ -90,6 +90,14 @@ export class GitLabHost implements Host {
     return JSON.parse(res.stdout) as GlabMr;
   }
 
+  async fileAt(path: string, sha: string): Promise<string> {
+    const res = await this.run("glab", [
+      "api",
+      `projects/${this.projectPath}/repository/files/${encodeURIComponent(path)}/raw?ref=${sha}`,
+    ]);
+    return res.stdout;
+  }
+
   async fetch(): Promise<FetchResult> {
     const mr = await this.fetchMr();
     const diff = await this.run("glab", ["mr", "diff", String(this.id), "-R", this.repo]);

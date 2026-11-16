@@ -63,6 +63,21 @@ export interface LastReview {
 }
 
 /** Body of POST /scope: which diff to show. */
+/** Line numbers of one hunk, without its lines. */
+export interface HunkRange {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+}
+
+/** GET /file?path= — the file on the PR/MR side, to show unchanged lines around hunks. */
+export interface FileContext {
+  lines: string[];
+  /** Every hunk of the file in the whole PR/MR, so expanding stops at changes shown elsewhere. */
+  hunks: HunkRange[];
+}
+
 export interface ScopeBody {
   scope: DiffScope;
 }

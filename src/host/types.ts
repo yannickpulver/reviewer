@@ -73,6 +73,8 @@ export interface Host {
     summary: string,
     action: ReviewAction,
   ): Promise<{ url: string }>;
+  /** Content of `path` at `sha` on the PR/MR's side, for showing unchanged lines around a hunk. */
+  fileAt?(path: string, sha: string): Promise<string>;
   /** The current user's most recent submitted review (GitHub only), or null/undefined if unsupported/none. */
   getLastReview?(): Promise<{ sha: string; submittedAt: string } | null>;
   /**
